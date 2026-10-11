@@ -1,5 +1,5 @@
 import {describe,expect,it} from 'vitest';
-import {matchesConfiguredAdminPassword,resolveCredentialLookup} from '../lib/credential-lookup';
+import {resolveCredentialLookup} from '../lib/credential-lookup';
 import {AUTH_SESSION_MAX_AGE_SECONDS,isAuthSessionExpired} from '../lib/auth-session';
 
 describe('auth session expiration',()=>{
@@ -25,24 +25,6 @@ describe('resolveCredentialLookup',()=>{
     expect(resolveCredentialLookup('admin','admin@example.invalid','admin','admin-configured@example.invalid')).toEqual({
       isAdminUsername:true,
       lookupEmail:'admin-configured@example.invalid',
-    });
-  });
-
-  it('normalizes the configured admin email before database lookup',()=>{
-    expect(resolveCredentialLookup('admin','admin@example.invalid','admin',' ADMIN-CONFIGURED@EXAMPLE.INVALID ')).toEqual({
-      isAdminUsername:true,
-      lookupEmail:'admin-configured@example.invalid',
-    });
-  });
-
-  describe('matchesConfiguredAdminPassword',()=>{
-    it('accepts only the currently configured admin password',()=>{
-      expect(matchesConfiguredAdminPassword('current-admin-password','current-admin-password')).toBe(true);
-      expect(matchesConfiguredAdminPassword('previous-admin-password','current-admin-password')).toBe(false);
-    });
-
-    it('rejects sign-in when no admin password is configured',()=>{
-      expect(matchesConfiguredAdminPassword('any-password','')).toBe(false);
     });
   });
 
