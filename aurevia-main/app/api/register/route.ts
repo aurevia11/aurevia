@@ -87,7 +87,8 @@ export async function POST(req:Request){
 			if(fields.includes('phone'))return NextResponse.json({error:'An account with this phone number already exists.'},{status:409});
 			return NextResponse.json({error:'These registration details are already in use.'},{status:409});
 		}
-		const errorCode=error&&typeof error==='object'&&'code' in error&&typeof error.code==='string'?error.code:undefined;
+		const rawErrorCode=error&&typeof error==='object'&&'code' in error&&typeof error.code==='string'?error.code:'';
+		const errorCode=/^[A-Z0-9_]{2,32}$/.test(rawErrorCode)?rawErrorCode:undefined;
 		const errorName=error instanceof Error?error.name:'UnknownError';
 		console.error('Registration request failed.',{requestId,stage,errorName,errorCode});
 		if(error instanceof Prisma.PrismaClientKnownRequestError&&['P2021','P2022'].includes(error.code))return NextResponse.json({error:'The registration service is being updated. Please try again shortly.',requestId},{status:503});
