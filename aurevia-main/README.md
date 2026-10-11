@@ -110,10 +110,11 @@ Generate a high-entropy `CRON_SECRET` and store it in Vercel project settings. V
 
 ### Render deployment
 
-Use a Render **Node web service** connected to the existing GitHub repository. Render's persistent web service supports this custom Next.js/Socket.IO HTTP server and WebSocket upgrades; do not deploy it as a static site or serverless function. Use one instance while the in-process Socket.IO market engine is enabled; horizontal scaling requires a shared Socket.IO adapter and coordinated market worker, which are not currently configured.
+Use a Render **Node web service** connected to the existing GitHub repository. Set its Root Directory to `aurevia-main` (the app and `package.json` are in that repository subdirectory). Render's persistent web service supports this custom Next.js/Socket.IO HTTP server and WebSocket upgrades; do not deploy it as a static site or serverless function. Use one instance while the in-process Socket.IO market engine is enabled; horizontal scaling requires a shared Socket.IO adapter and coordinated market worker, which are not currently configured.
 
-- Build command: `npm ci && npm run build`
+- Build command: `npm ci --include=dev && npm run build`
 - Start command: `npm start`
+- If Render reports a build command of `yarn`, update the service's Build Command in **Settings → Build & Deploy** to the command above. Installing dependencies alone does not generate the `.next` production build required by the start command.
 - Docker is not required for Render's native Node runtime. The checked-in multi-stage `Dockerfile` is an alternative if the Render service is explicitly configured as a Docker service.
 
 Configure these variables in Render's environment settings (secrets stay in Render, never in source):
