@@ -9,6 +9,7 @@ import {db} from '@/lib/db';
 import {createNotification} from '@/lib/notifications';
 import {rateLimit} from '@/lib/rate-limit';
 import {matchesConfiguredAdminPassword,resolveCredentialLookup} from '@/lib/credential-lookup';
+import {requiresRegistrationVerification} from '@/lib/registration-verification';
 import {getServerConfiguration} from '@/lib/config/env';
 import {AUTH_SESSION_MAX_AGE_SECONDS,isAuthSessionExpired} from '@/lib/auth-session';
 
@@ -63,7 +64,8 @@ export const authOptions:NextAuthOptions={
       const {isAdminUsername,lookupEmail}=resolveCredentialLookup(username,email,authConfig.adminUsername,authConfig.adminEmail,c?.adminLogin==='true');
       if(!lookupEmail){await writeLoginAudit('FAILED',undefined,undefined,'MISSING_IDENTIFIER');return null;}
       const u=await db.user.findUnique({where:{email:lookupEmail}});
-      if(!u||u.status!=='ACTIVE'||(serverConfig.verification.registrationVerificationEnabled&&u.role==='USER'&&u.requiresRegistrationVerification&&!u.verifiedAt)){
+      const registrationVerificationRequired=u&&requiresRegistrationVerification(u.role,serverConfig.verification.registrationVerificationEnabled,u.requiresRegistrationVerification,u.verifiedAt);
+      if(!u||u.status!=='ACTIVE'||registrationVerificationRequired){
         await writeLoginAudit('FAILED',u?.id,undefined,!u?'ACCOUNT_NOT_FOUND':u.status!=='ACTIVE'?'ACCOUNT_INACTIVE':'VERIFICATION_REQUIRED');
         return null;
       }
