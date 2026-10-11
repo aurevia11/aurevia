@@ -71,7 +71,7 @@ export default function RegistrationExperience(){
 					setResendSeconds(result.resendAfterSeconds||0);
 					setStage('verify');
 				}
-				setError(result.error||translate('registrationFailed'));return;
+				setError(result.requestId?`${result.error||translate('registrationFailed')} (Reference: ${result.requestId})`:result.error||translate('registrationFailed'));return;
 			}
 			if(!result.verificationRequired){
 				router.replace('/login?registered=1');

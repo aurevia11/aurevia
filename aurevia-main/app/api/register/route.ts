@@ -1,4 +1,5 @@
 import {NextResponse} from 'next/server';
+import {randomUUID} from 'node:crypto';
 import bcrypt from 'bcryptjs';
 import {AccountMode,Prisma} from '@prisma/client';
 import {z,ZodError} from 'zod';
@@ -26,6 +27,8 @@ const schema=z.object({
 });
 
 export async function POST(req:Request){
+	const requestId=randomUUID();
+	let stage='request-validation';
 	try{
 		rateLimit(`register:${req.headers.get('x-forwarded-for')||'unknown'}`,5,3600000);
 		const p=schema.parse(await req.json());
@@ -42,18 +45,28 @@ export async function POST(req:Request){
 			const error=process.env.NODE_ENV==='production'?'Account verification delivery is not configured. Please contact support.':'Development setup: verification delivery is not configured. Configure an email or SMS provider; no code was generated or exposed.';
 			return NextResponse.json({error},{status:503});
 		}
+		stage='registration-transaction';
 		const result=await db.$transaction(async tx=>{
+			stage='create-user';
 			const created=await tx.user.create({data:{email,passwordHash:await bcrypt.hash(p.password,12),name:p.name,country:p.country,phone:p.phone||null,accountMode:p.accountMode,requiresRegistrationVerification:Boolean(channel),termsAcceptedAt:new Date()}});
+			stage='link-waitlist';
 			await tx.waitlistEntry.updateMany({where:{email, userId:null},data:{userId:created.id,status:'REGISTERED',updatedAt:new Date()}});
+			stage='save-kyc-profile';
 			await tx.kycProfile.upsert({where:{userId:created.id},update:{dob:dateOfBirth},create:{userId:created.id,dob:dateOfBirth}});
-						if(created.accountMode===AccountMode.DEMO)await initializeDemoAccount(tx,created.id);
-						else await ensureUserLedger(tx,created.id,created.accountMode);
+			stage='initialize-account-ledger';
+			if(created.accountMode===AccountMode.DEMO)await initializeDemoAccount(tx,created.id);
+			else await ensureUserLedger(tx,created.id,created.accountMode);
+			stage='initialize-system-account';
 			await ensureSystemAccount(tx,'SYSTEM:LIABILITY','Customer Funds');
+			stage='create-user-notification';
 			await createNotification(tx,{userId:created.id,type:NotificationType.ACCOUNT,title:'Account registration received',message:channel?'Complete the configured contact verification to finish registration.':'Your account is ready for sign-in. Phone verification is not enabled.',dedupeKey:`registration:${created.id}:created`,actionUrl:channel?'/register':'/dashboard'});
+			stage='notify-active-admins';
 			await notifyActiveAdmins(tx,{type:NotificationType.ACCOUNT,title:'New account registration',message:`A new ${created.accountMode.toLowerCase()} account registration is awaiting review.`,dedupeKey:`registration:${created.id}:admin`,relatedEntity:'USER',relatedId:created.id,actionUrl:'/admin'});
+			stage='create-verification-challenge';
 			const challenge=channel?await issueVerificationCode(tx,created,channel):null;
 			return {user:created,challenge};
 		});
+		stage='deliver-verification-challenge';
 		if(!result.challenge)return NextResponse.json({message:'If this account can be created, you can continue to sign in.',verificationRequired:false},{status:202});
 		const delivered=await deliverVerificationCode(result.challenge.channel,result.user,result.challenge.code);
 		if(!delivered){
@@ -74,9 +87,12 @@ export async function POST(req:Request){
 			if(fields.includes('phone'))return NextResponse.json({error:'An account with this phone number already exists.'},{status:409});
 			return NextResponse.json({error:'These registration details are already in use.'},{status:409});
 		}
-		if(error instanceof Prisma.PrismaClientKnownRequestError&&['P2021','P2022'].includes(error.code))return NextResponse.json({error:'The registration service is being updated. Please try again shortly.'},{status:503});
+		const errorCode=error&&typeof error==='object'&&'code' in error&&typeof error.code==='string'?error.code:undefined;
+		const errorName=error instanceof Error?error.name:'UnknownError';
+		console.error('Registration request failed.',{requestId,stage,errorName,errorCode});
+		if(error instanceof Prisma.PrismaClientKnownRequestError&&['P2021','P2022'].includes(error.code))return NextResponse.json({error:'The registration service is being updated. Please try again shortly.',requestId},{status:503});
 		if(error instanceof Error&&error.message==='RATE_LIMITED')return NextResponse.json({error:'Too many registration attempts. Try again later.'},{status:429});
-		if(error&&typeof error==='object'&&'code' in error&&['P1001','P1002','P1017'].includes(String(error.code)))return NextResponse.json({error:'The database is temporarily unavailable. Please try again shortly.'},{status:503});
-		return NextResponse.json({error:'We could not complete registration. Please try again or contact support.'},{status:500});
+		if(error&&typeof error==='object'&&'code' in error&&['P1001','P1002','P1017'].includes(String(error.code)))return NextResponse.json({error:'The database is temporarily unavailable. Please try again shortly.',requestId},{status:503});
+		return NextResponse.json({error:'We could not complete registration. Please try again or contact support.',requestId},{status:500});
 	}
 }
