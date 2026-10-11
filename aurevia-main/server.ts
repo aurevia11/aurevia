@@ -6,8 +6,14 @@ import {tickMarkets} from './lib/market';
 import {createIndividualTradingApiProviderFromEnvironment} from './lib/providers/alpaca-crypto-provider';
 import {registerExecutionProvider} from './lib/providers/registry';
 import {getServerConfiguration} from './lib/config/env';
+import {resolveRenderApplicationUrls} from './lib/config/render-urls';
 
 loadEnvConfig(process.cwd());
+const renderApplicationUrls=resolveRenderApplicationUrls(process.env);
+if(renderApplicationUrls){
+	process.env.NEXTAUTH_URL=renderApplicationUrls.nextAuthUrl;
+	process.env.NEXT_PUBLIC_APP_URL=renderApplicationUrls.publicAppUrl;
+}
 const tradingProvider=createIndividualTradingApiProviderFromEnvironment();
 if(tradingProvider)registerExecutionProvider(tradingProvider,{executionEnabled:getServerConfiguration().execution.realEnabled&&tradingProvider.executionMode==='LIVE'});
 

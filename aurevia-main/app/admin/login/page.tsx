@@ -21,7 +21,7 @@ export default function AdminLogin(){
    try{
     const result=await signIn('credentials',{username:identifier,email:identifier,adminLogin:'true',password,replaceSession:String(replaceSession),redirect:false,callbackUrl:'/admin'});
     if(result?.ok){await update();router.replace('/admin');router.refresh();}
-    else setError('Sign-in failed. Verify the password against the current ADMIN_PASSWORD in this workspace’s .env. Clear any saved password and re-enter it if needed. Replace another session only if you intend to sign it out.');
+    else setError('Sign-in failed. Check the admin username/email and the ADMIN_PASSWORD configured in Render. If you are already signed in on another device, select session replacement only if you intend to sign it out.');
    }catch{setError('Unable to reach the authentication service. Please try again.')}
    finally{setBusy(false)}
  }

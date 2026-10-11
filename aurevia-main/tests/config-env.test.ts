@@ -5,6 +5,7 @@ import {
   normalizeAlpacaTradingBaseUrl,
   validateServerConfiguration,
 } from '../lib/config/env';
+import {resolveRenderApplicationUrls} from '../lib/config/render-urls';
 
 afterEach(()=>vi.unstubAllEnvs());
 
@@ -100,6 +101,32 @@ describe('canonical environment configuration',()=>{
       registrationVerificationEnabled:false,
       phoneVerificationRequired:false,
     });
+  });
+
+  it('uses the Render HTTPS origin instead of localhost for production auth URLs',()=>{
+    expect(resolveRenderApplicationUrls({
+      NODE_ENV:'production',
+      RENDER_EXTERNAL_URL:'https://aurevia.onrender.com',
+      NEXTAUTH_URL:'http://localhost:3000',
+      NEXT_PUBLIC_APP_URL:'http://localhost:3000',
+    })).toEqual({
+      nextAuthUrl:'https://aurevia.onrender.com',
+      publicAppUrl:'https://aurevia.onrender.com',
+    });
+    expect(resolveRenderApplicationUrls({
+      NODE_ENV:'production',
+      RENDER_EXTERNAL_URL:'https://aurevia.onrender.com',
+      NEXTAUTH_URL:'https://auth.example.com',
+      NEXT_PUBLIC_APP_URL:'https://app.example.com',
+    })).toEqual({
+      nextAuthUrl:'https://app.example.com',
+      publicAppUrl:'https://app.example.com',
+    });
+    expect(resolveRenderApplicationUrls({
+      NODE_ENV:'development',
+      RENDER_EXTERNAL_URL:'https://aurevia.onrender.com',
+      NEXTAUTH_URL:'http://localhost:3000',
+    })).toBeNull();
   });
 
   it('accepts the Individual Trading API variable names without enabling real execution by default',()=>{
