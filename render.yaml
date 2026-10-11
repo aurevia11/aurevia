@@ -4,6 +4,7 @@ services:
     runtime: node
     plan: starter
     region: oregon
+    rootDir: aurevia-main
     buildCommand: npm ci && npm run build
     startCommand: npm start
     healthCheckPath: /api/health
