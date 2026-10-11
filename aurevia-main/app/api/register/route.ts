@@ -45,10 +45,12 @@ export async function POST(req:Request){
 			const error=process.env.NODE_ENV==='production'?'Account verification delivery is not configured. Please contact support.':'Development setup: verification delivery is not configured. Configure an email or SMS provider; no code was generated or exposed.';
 			return NextResponse.json({error},{status:503});
 		}
+		stage='hash-password';
+		const passwordHash=await bcrypt.hash(p.password,12);
 		stage='registration-transaction';
 		const result=await db.$transaction(async tx=>{
 			stage='create-user';
-			const created=await tx.user.create({data:{email,passwordHash:await bcrypt.hash(p.password,12),name:p.name,country:p.country,phone:p.phone||null,accountMode:p.accountMode,requiresRegistrationVerification:Boolean(channel),termsAcceptedAt:new Date()}});
+			const created=await tx.user.create({data:{email,passwordHash,name:p.name,country:p.country,phone:p.phone||null,accountMode:p.accountMode,requiresRegistrationVerification:Boolean(channel),termsAcceptedAt:new Date()}});
 			stage='link-waitlist';
 			await tx.waitlistEntry.updateMany({where:{email, userId:null},data:{userId:created.id,status:'REGISTERED',updatedAt:new Date()}});
 			stage='save-kyc-profile';
@@ -65,7 +67,7 @@ export async function POST(req:Request){
 			stage='create-verification-challenge';
 			const challenge=channel?await issueVerificationCode(tx,created,channel):null;
 			return {user:created,challenge};
-		});
+		},{maxWait:10000,timeout:15000});
 		stage='deliver-verification-challenge';
 		if(!result.challenge)return NextResponse.json({message:'If this account can be created, you can continue to sign in.',verificationRequired:false},{status:202});
 		const delivered=await deliverVerificationCode(result.challenge.channel,result.user,result.challenge.code);
