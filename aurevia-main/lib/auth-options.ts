@@ -8,7 +8,7 @@ import {NotificationType} from '@prisma/client';
 import {db} from '@/lib/db';
 import {createNotification} from '@/lib/notifications';
 import {rateLimit} from '@/lib/rate-limit';
-import {resolveCredentialLookup} from '@/lib/credential-lookup';
+import {matchesConfiguredAdminPassword,resolveCredentialLookup} from '@/lib/credential-lookup';
 import {getServerConfiguration} from '@/lib/config/env';
 import {AUTH_SESSION_MAX_AGE_SECONDS,isAuthSessionExpired} from '@/lib/auth-session';
 
@@ -67,7 +67,10 @@ export const authOptions:NextAuthOptions={
         await writeLoginAudit('FAILED',u?.id,undefined,!u?'ACCOUNT_NOT_FOUND':u.status!=='ACTIVE'?'ACCOUNT_INACTIVE':'VERIFICATION_REQUIRED');
         return null;
       }
-      const ok=await bcrypt.compare(password,u.passwordHash);
+      const usesConfiguredAdminPassword=!!authConfig.adminEmail&&lookupEmail.toLowerCase()===authConfig.adminEmail.toLowerCase();
+      const ok=usesConfiguredAdminPassword
+        ?matchesConfiguredAdminPassword(password,authConfig.adminPassword)
+        :await bcrypt.compare(password,u.passwordHash);
       if(!ok){await writeLoginAudit('FAILED',u.id,undefined,'INVALID_CREDENTIALS');return null;}
       if(isAdminUsername&&u.role!=='ADMIN'){await writeLoginAudit('FAILED',u.id,undefined,'ADMIN_ROLE_REQUIRED');return null;}
       const activeSessionExpired=!!u.activeSessionId&&isAuthSessionExpired(u.activeSessionUpdatedAt);
