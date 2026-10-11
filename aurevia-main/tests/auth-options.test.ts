@@ -29,6 +29,20 @@ describe('resolveCredentialLookup',()=>{
     });
   });
 
+  it('falls back to the configured admin account when an admin username differs from Render config',()=>{
+    expect(resolveCredentialLookup('administrator','administrator','configured-admin','admin-configured@example.invalid',true)).toEqual({
+      isAdminUsername:true,
+      lookupEmail:'admin-configured@example.invalid',
+    });
+  });
+
+  it('uses the supplied email for administrator sign-in when an email is entered',()=>{
+    expect(resolveCredentialLookup('other-admin@example.invalid','other-admin@example.invalid','admin','admin-configured@example.invalid',true)).toEqual({
+      isAdminUsername:true,
+      lookupEmail:'other-admin@example.invalid',
+    });
+  });
+
   describe('requiresRegistrationVerification',()=>{
     it('never blocks an administrator, even when registration verification is enabled',()=>{
       expect(requiresRegistrationVerification('ADMIN',true,true,null)).toBe(false);

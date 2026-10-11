@@ -5,7 +5,14 @@ export function resolveCredentialLookup(username:string,email:string,adminUserna
   const normalizedEmail=email.trim().toLowerCase();
   const normalizedAdminEmail=adminEmail?.trim().toLowerCase();
   const matchesAdminUsername=!!normalizedUsername&&!!adminUsername&&normalizedUsername===adminUsername.trim().toLowerCase();
-  if(adminLogin)return {isAdminUsername:true,lookupEmail:matchesAdminUsername?normalizedAdminEmail:normalizedEmail||normalizedAdminEmail};
+  if(adminLogin){
+    const lookupEmail=matchesAdminUsername
+      ?normalizedAdminEmail
+      :normalizedEmail.includes('@')
+        ?normalizedEmail
+        :normalizedAdminEmail;
+    return {isAdminUsername:true,lookupEmail};
+  }
   const isAdminUsername=matchesAdminUsername;
   return {isAdminUsername,lookupEmail:isAdminUsername?normalizedAdminEmail:normalizedEmail};
 }
