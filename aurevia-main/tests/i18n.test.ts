@@ -3,6 +3,12 @@ import {isLocale,localeMeta,locales,normalizeLocale,translations,t} from '@/lib/
 
 describe('locale system',()=>{
   it('accepts every configured locale',()=>{for(const locale of locales)expect(isLocale(locale)).toBe(true)});
+  it('does not expose Nigerian language options and falls back for stored removed locales',()=>{
+    expect(locales).not.toEqual(expect.arrayContaining(['ha','yo','ig']));
+    expect(normalizeLocale('ha','en')).toBe('en');
+    expect(normalizeLocale('yo','en')).toBe('en');
+    expect(normalizeLocale('ig','en')).toBe('en');
+  });
   it('keeps every locale key set aligned',()=>{
     const keys=Object.keys(translations.en);
     for(const locale of locales){
