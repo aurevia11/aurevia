@@ -38,16 +38,16 @@ describe('account verification codes',()=>{
   expect(availableVerificationChannel(null)).toBeNull();
  });
 
-    it('skips registration contact verification unless explicitly enabled',()=>{
+    it('selects verification channels only when explicitly requested by a caller',()=>{
         process.env.REGISTRATION_VERIFICATION_ENABLED='false';
         process.env.VERIFICATION_SMS_API_KEY='test-only-key';
         process.env.VERIFICATION_SMS_API_URL='https://sms.example.invalid/send';
-        expect(registrationVerificationChannel('+12125550123',true)).toBeNull();
+           expect(registrationVerificationChannel('+12125550123',true,false)).toBeNull();
         process.env.REGISTRATION_VERIFICATION_ENABLED='true';
-        expect(registrationVerificationChannel('+12125550123',true)).toBe('SMS');
-        expect(registrationVerificationChannel(null,true)).toBeNull();
+           expect(registrationVerificationChannel('+12125550123',true,true)).toBe('SMS');
+           expect(registrationVerificationChannel(null,true,true)).toBeNull();
         process.env.VERIFICATION_EMAIL_API_KEY='test-only-key';
         process.env.VERIFICATION_EMAIL_API_URL='https://mail.example.invalid/send';
-        expect(registrationVerificationChannel('+12125550123',false)).toBe('EMAIL');
+           expect(registrationVerificationChannel('+12125550123',false,true)).toBe('EMAIL');
     });
 });

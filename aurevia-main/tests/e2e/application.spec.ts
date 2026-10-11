@@ -465,7 +465,7 @@ test('sign-in password visibility, recovery link, and account link are accessibl
 	await expectNoHorizontalOverflow(page);
 });
 
-test('registration selects account mode, verifies through delivery, then login persists until logout',async({page})=>{
+test('registration skips contact verification and platform health remains available after logout',async({page})=>{
 	const email=fixture('REGISTRATION_EMAIL');
 	const password=fixture('REGISTRATION_PASSWORD');
 	await page.request.post('http://127.0.0.1:4311/reset');
@@ -500,29 +500,9 @@ test('registration selects account mode, verifies through delivery, then login p
 	await page.getByRole('button',{name:'Create account'}).click();
 	const registrationPayload=(await registrationRequest).postDataJSON();
 	expect(registrationPayload).toMatchObject({name:'Temporary Browser Test',country:'United States',phone:'+447400123456',dateOfBirth:'2000-02-29'});
-	await expect(page.getByRole('heading',{name:'Verify your account'})).toBeVisible();
+	await expect(page).toHaveURL(/\/login\?registered=1/);
 	const providerStats=await page.request.get('http://127.0.0.1:4311/stats');
-	expect(await providerStats.json()).toMatchObject({email:1,sms:0});
-	const unverifiedLogin=await page.context().newPage();
-	await unverifiedLogin.goto('/login');
-	await waitForStartup(unverifiedLogin);
-	await unverifiedLogin.getByLabel('Email or administrator username').fill(email);
-	await unverifiedLogin.getByLabel('Password',{exact:true}).fill(password);
-	await unverifiedLogin.getByRole('button',{name:'Sign in'}).click();
-	await expect(unverifiedLogin.getByText(/Sign-in failed/)).toBeVisible();
-	await expect(unverifiedLogin.getByLabel('Email or administrator username')).toHaveValue(email);
-	await unverifiedLogin.close();
-	const codeResponse=await page.request.get(`http://127.0.0.1:4311/test-code?email=${encodeURIComponent(email)}`);
-	expect(codeResponse.ok()).toBeTruthy();
-	const code=(await codeResponse.json()).code as string;
-	const invalidCode=code==='000000'?'000001':'000000';
-	await page.getByLabel('Verification code').fill(invalidCode);
-	await page.getByRole('button',{name:'Verify account'}).click();
-	await expect(page.getByText('The code is incorrect.',{exact:true})).toBeVisible();
-	await page.getByLabel('Verification code').fill(code);
-	await page.getByRole('button',{name:'Verify account'}).click();
-	await expect(page).toHaveURL(/\/login\?verified=1/);
-	await expect(page.getByText('Your account is verified. Sign in to continue.',{exact:true})).toBeVisible();
+	expect(await providerStats.json()).toMatchObject({email:0,sms:0});
 	await page.getByLabel('Email or administrator username').fill(email);
 	await page.getByLabel('Password',{exact:true}).fill(password);
 	await page.getByRole('button',{name:'Sign in'}).click();
@@ -575,6 +555,9 @@ test('registration selects account mode, verifies through delivery, then login p
 	await expect(page.locator('.dashboard-real-state')).toHaveCount(0);
 	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5000);
 	await logout(page);
+	const healthAfterLogout=await page.request.get('/api/health');
+	expect(healthAfterLogout.ok()).toBeTruthy();
+	expect(await healthAfterLogout.json()).toMatchObject({ok:true,database:'ok'});
 	await loginAs(page,email,password);
 	await expect(page.getByRole('heading',{name:'Hello, Edited'})).toBeVisible();
 	expect(await page.request.get('/api/profile').then(response=>response.json())).toMatchObject({name:'Edited Persistent Owner',address:'42 Persistent Test Road'});

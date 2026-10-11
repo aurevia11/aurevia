@@ -91,9 +91,15 @@ describe('canonical environment configuration',()=>{
     expect(getServerConfiguration({SUPPORT_PHONE:'+1 555 010 1234'}).smtp.supportPhone).toBe('+1 555 010 1234');
   });
 
-  it('keeps registration contact verification disabled unless explicitly enabled',()=>{
+  it('keeps registration contact verification disabled even when legacy env flags enable it',()=>{
     expect(getServerConfiguration({}).verification.registrationVerificationEnabled).toBe(false);
-    expect(getServerConfiguration({REGISTRATION_VERIFICATION_ENABLED:'true'}).verification.registrationVerificationEnabled).toBe(true);
+    expect(getServerConfiguration({
+      REGISTRATION_VERIFICATION_ENABLED:'true',
+      PHONE_VERIFICATION_REQUIRED:'true',
+    }).verification).toMatchObject({
+      registrationVerificationEnabled:false,
+      phoneVerificationRequired:false,
+    });
   });
 
   it('accepts the Individual Trading API variable names without enabling real execution by default',()=>{

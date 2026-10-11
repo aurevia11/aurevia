@@ -199,8 +199,8 @@ export function getServerConfiguration(source: EnvironmentSource = process.env):
       emailApiKey: env('VERIFICATION_EMAIL_API_KEY', source),
       smsApiUrl: env('VERIFICATION_SMS_API_URL', source),
       smsApiKey: env('VERIFICATION_SMS_API_KEY', source),
-      registrationVerificationEnabled: booleanEnv('REGISTRATION_VERIFICATION_ENABLED', source),
-      phoneVerificationRequired: booleanEnv('PHONE_VERIFICATION_REQUIRED', source),
+      registrationVerificationEnabled: false,
+      phoneVerificationRequired: false,
       configured: verificationEmailConfigured || verificationSmsConfigured,
     },
     execution: {
