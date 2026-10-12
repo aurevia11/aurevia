@@ -1,5 +1,5 @@
 import {describe,expect,it} from 'vitest';
-import {matchesConfiguredAdminPassword,resolveCredentialLookup} from '../lib/credential-lookup';
+import {matchesConfiguredAdminIdentity,matchesConfiguredAdminPassword,resolveCredentialLookup} from '../lib/credential-lookup';
 import {requiresRegistrationVerification} from '../lib/registration-verification';
 import {AUTH_SESSION_MAX_AGE_SECONDS,isAuthSessionExpired} from '../lib/auth-session';
 
@@ -98,5 +98,14 @@ describe('resolveCredentialLookup',()=>{
       isAdminUsername:false,
       lookupEmail:'other@example.invalid',
     });
+  });
+});
+
+describe('matchesConfiguredAdminIdentity',()=>{
+  it('accepts only the configured admin username or email',()=>{
+    expect(matchesConfiguredAdminIdentity(' Admin ','other@example.invalid','admin','admin@example.invalid')).toBe(true);
+    expect(matchesConfiguredAdminIdentity('other','ADMIN@example.invalid','admin','admin@example.invalid')).toBe(true);
+    expect(matchesConfiguredAdminIdentity('other','other@example.invalid','admin','admin@example.invalid')).toBe(false);
+    expect(matchesConfiguredAdminIdentity('admin','admin@example.invalid','admin',undefined)).toBe(false);
   });
 });

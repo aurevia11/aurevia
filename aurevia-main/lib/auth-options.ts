@@ -4,11 +4,11 @@ import {createHash,randomUUID} from 'node:crypto';
 import {isIP} from 'node:net';
 import type {IncomingHttpHeaders} from 'node:http';
 import bcrypt from 'bcryptjs';
-import {NotificationType} from '@prisma/client';
+import {NotificationType,Prisma,Role,UserStatus} from '@prisma/client';
 import {db} from '@/lib/db';
 import {createNotification} from '@/lib/notifications';
 import {rateLimit} from '@/lib/rate-limit';
-import {matchesConfiguredAdminPassword,resolveCredentialLookup} from '@/lib/credential-lookup';
+import {matchesConfiguredAdminIdentity,matchesConfiguredAdminPassword,resolveCredentialLookup} from '@/lib/credential-lookup';
 import {requiresRegistrationVerification} from '@/lib/registration-verification';
 import {getServerConfiguration} from '@/lib/config/env';
 import {AUTH_SESSION_MAX_AGE_SECONDS,isAuthSessionExpired} from '@/lib/auth-session';
@@ -63,7 +63,21 @@ export const authOptions:NextAuthOptions={
       const authConfig=serverConfig.auth;
       const {isAdminUsername,lookupEmail}=resolveCredentialLookup(username,email,authConfig.adminUsername,authConfig.adminEmail,c?.adminLogin==='true');
       if(!lookupEmail){await writeLoginAudit('FAILED',undefined,undefined,'MISSING_IDENTIFIER');return null;}
-      const u=await db.user.findUnique({where:{email:lookupEmail}});
+      let u=await db.user.findUnique({where:{email:lookupEmail}});
+      if((!u||u.role!==Role.ADMIN)&&c?.adminLogin==='true'&&authConfig.adminUsername&&authConfig.adminEmail&&authConfig.adminPassword?.length>=12&&matchesConfiguredAdminIdentity(username,email,authConfig.adminUsername,authConfig.adminEmail)&&matchesConfiguredAdminPassword(password,authConfig.adminPassword)){
+        const configuredEmail=authConfig.adminEmail.trim().toLowerCase();
+        const passwordHash=await bcrypt.hash(authConfig.adminPassword,12);
+        u=await db.$transaction(async tx=>{
+          const account=await tx.user.findUnique({where:{email:configuredEmail}});
+          const existingAdmin=await tx.user.findFirst({where:{role:Role.ADMIN},select:{id:true}});
+          if(existingAdmin&&existingAdmin.id!==account?.id)return account;
+          if(account){
+            if(account.role===Role.ADMIN)return account;
+            return tx.user.update({where:{id:account.id},data:{passwordHash,name:authConfig.adminUsername!.trim(),role:Role.ADMIN,status:UserStatus.ACTIVE,requiresRegistrationVerification:false}});
+          }
+          return tx.user.create({data:{email:configuredEmail,passwordHash,name:authConfig.adminUsername!.trim(),role:Role.ADMIN,status:UserStatus.ACTIVE}});
+        },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+      }
       const registrationVerificationRequired=u&&requiresRegistrationVerification(u.role,serverConfig.verification.registrationVerificationEnabled,u.requiresRegistrationVerification,u.verifiedAt);
       if(!u||u.status!=='ACTIVE'||registrationVerificationRequired){
         await writeLoginAudit('FAILED',u?.id,undefined,!u?'ACCOUNT_NOT_FOUND':u.status!=='ACTIVE'?'ACCOUNT_INACTIVE':'VERIFICATION_REQUIRED');

@@ -1,5 +1,13 @@
 import {createHash,timingSafeEqual} from 'node:crypto';
 
+export function matchesConfiguredAdminIdentity(username:string,email:string,adminUsername:string|undefined,adminEmail:string|undefined){
+  const normalizedUsername=username.trim().toLowerCase();
+  const normalizedEmail=email.trim().toLowerCase();
+  const normalizedAdminUsername=adminUsername?.trim().toLowerCase();
+  const normalizedAdminEmail=adminEmail?.trim().toLowerCase();
+  return !!normalizedAdminUsername&&!!normalizedAdminEmail&&(normalizedUsername===normalizedAdminUsername||normalizedEmail===normalizedAdminEmail);
+}
+
 export function resolveCredentialLookup(username:string,email:string,adminUsername:string|undefined,adminEmail:string|undefined,adminLogin=false){
   const normalizedUsername=username.trim().toLowerCase();
   const normalizedEmail=email.trim().toLowerCase();

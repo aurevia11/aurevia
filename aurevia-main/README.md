@@ -86,7 +86,7 @@ Copy `.env.example` to `.env`.
 
 Only `NEXT_PUBLIC_APP_URL` and `NEXT_PUBLIC_SUPABASE_URL` are public configuration. All other values, especially database URLs, `NEXTAUTH_SECRET`, administrator credentials, SMTP credentials, verification API keys, and `SUPABASE_SERVICE_ROLE_KEY`, are server-only. Never put a Supabase service-role/secret key in a `NEXT_PUBLIC_` variable. The Data API roles `anon` and `authenticated` have no table or sequence privileges on the application's `public` schema, and row-level security is enabled for its tables; the application uses its server-side Prisma connection.
 
-`ADMIN_USERNAME`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD` are used by the existing admin login and seed. The configured admin account checks its password against the current server-side `ADMIN_PASSWORD`; restart the server after changing that value, then it takes effect on the next sign-in without reseeding. Use a unique password of at least 12 characters. The seed updates the configured admin account, adopts an existing admin rather than creating another, and provisions an admin only when none exists.
+`ADMIN_USERNAME`, `ADMIN_EMAIL`, and `ADMIN_PASSWORD` are server-only administrator credentials. On the dedicated admin login form, the first sign-in using the exact configured username or email and password provisions the configured ADMIN account if no other administrator exists. The password must be at least 12 characters. A matching existing non-admin account is promoted only after the configured password is verified; a different existing administrator is never replaced. The seed remains available for explicit provisioning and adopts an existing admin rather than creating another. Restart the server after changing these values.
 
 Registration completes without an email/SMS ownership challenge. Legacy `REGISTRATION_VERIFICATION_ENABLED` and `PHONE_VERIFICATION_REQUIRED` environment values are ignored. This does not bypass KYC or other eligibility checks for REAL-account funding and trading actions. `NEXT_PUBLIC_APP_URL`, `PORT`, and `MARKET_TICK_MS` are optional and have runtime defaults.
 
@@ -117,10 +117,10 @@ Use a Render **Node web service** connected to the existing GitHub repository. S
 - If Render reports a build command of `yarn`, update the service's Build Command in **Settings → Build & Deploy** to the command above. Installing dependencies alone does not generate the `.next` production build required by the start command.
 - Docker is not required for Render's native Node runtime. The checked-in multi-stage `Dockerfile` is an alternative if the Render service is explicitly configured as a Docker service.
 
-Configure these variables in Render's environment settings (secrets stay in Render, never in source):
+Configure these variables in Render's environment settings (secrets stay in Render, never in source). A local `.env` file is not automatically uploaded to Render:
 
 - Required: `DATABASE_URL`, `DIRECT_URL`, `NEXTAUTH_SECRET`, `NEXTAUTH_URL`, `NEXT_PUBLIC_APP_URL`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
-- Optional according to enabled features: `ADMIN_USERNAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, SMTP/support variables, and `MARKET_TICK_MS`. Legacy registration-verification environment settings are ignored; registration does not require email or SMS ownership challenges. KYC and administrator-review requirements for REAL-account activity remain enforced.
+- Required for administrator sign-in: `ADMIN_USERNAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`. Use the exact configured username or email and password at `/admin/login`; first sign-in provisions the admin only when no other admin exists. SMTP/support variables and `MARKET_TICK_MS` are optional. Legacy registration-verification environment settings are ignored; registration does not require email or SMS ownership challenges. KYC and administrator-review requirements for REAL-account activity remain enforced.
 
 Set both `NEXTAUTH_URL` and `NEXT_PUBLIC_APP_URL` to the same canonical HTTPS origin assigned to the Render service (or its verified custom domain). The database URLs must be the existing Supabase PostgreSQL connections; use Supabase's pooler for application traffic when appropriate and its direct connection for Prisma schema management. Render injects these at runtime and `npm start` preserves them. Do not run `npm run db:migrate`, `db:push`, or a reset command automatically during release; schema changes require a separately reviewed and authorized operation.
 
@@ -181,7 +181,7 @@ Email: configured with ADMIN_EMAIL
 Password: configured with ADMIN_PASSWORD
 ```
 
-Set `ADMIN_USERNAME`, `ADMIN_EMAIL`, and a unique, strong `ADMIN_PASSWORD` in an ignored `.env` file or managed secret store, then run `npm run db:seed`. No administrator password is included in the repository. The seed refuses to run without these values.
+Set `ADMIN_USERNAME`, `ADMIN_EMAIL`, and a unique, strong `ADMIN_PASSWORD` in the deployment secret manager or an ignored local `.env` file. No administrator password is included in the repository. On a fresh database, use those exact credentials at `/admin/login`; first sign-in provisions the ADMIN account. Alternatively, run `npm run db:seed` to provision explicitly. If an unrelated administrator already exists, first-login provisioning refuses to create a second one; use the seed's safe adoption behavior or sign in with that existing administrator.
 
 ## Docker
 
