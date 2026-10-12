@@ -6,6 +6,7 @@ services:
     region: oregon
     rootDir: aurevia-main
     buildCommand: npm ci --include=dev && npm run build
+    preDeployCommand: npm run db:migrate && npx prisma migrate status
     startCommand: npm start
     healthCheckPath: /api/health
     autoDeploy: true
