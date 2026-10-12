@@ -59,7 +59,6 @@ export async function POST(req:Request){
 			const funding=await getFundingProviderReadiness();
 			if(!funding.workflowEnabled)return NextResponse.json({error:'REAL_FUNDING_PROVIDER_UNAVAILABLE'},{status:503,headers:{'Cache-Control':'private, no-store'}});
 		}
-		if(user.accountMode==='REAL'&&parsed.type==='DEPOSIT'&&(!parsed.transactionReference||parsed.transactionReference.trim().length<4))return NextResponse.json({error:'A valid payment transaction reference is required for REAL deposits.'},{status:400});
 		const currency=parsed.currency.toUpperCase();
 
 		const result=await db.$transaction(async tx=>{

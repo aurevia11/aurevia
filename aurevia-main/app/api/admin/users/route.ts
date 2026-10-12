@@ -13,8 +13,8 @@ const manualBalanceSchema=z.object({
   amount:z.coerce.number().positive().max(100000000),
   type:z.enum(['CREDIT','DEBIT']),
   note:z.string().trim().max(300).optional(),
-  settlementReference:z.string().trim().min(4).max(180).optional(),
-}).refine(value=>value.accountMode!=='REAL'||(value.type==='CREDIT'&&!!value.settlementReference),{message:'REAL credits require a verified external settlement reference.'});
+  idempotencyKey:z.string().uuid().optional(),
+}).refine(value=>value.accountMode!=='REAL'||value.type==='CREDIT',{message:'REAL account adjustments only support configured credits.'});
 
 const schema=z.object({
   userId:z.string(),
@@ -62,27 +62,40 @@ export async function PATCH(req:Request){
       }
       if(restrictionChanged)await createNotification(tx,{userId:user.id,type:NotificationType.SECURITY,title:'Account access updated',message:user.accountRestricted?`An administrator restricted account access.${user.restrictionReason?` Reason: ${user.restrictionReason}`:''}`:!user.withdrawalEnabled?'Withdrawals are currently disabled for your account.':'Account restrictions were updated by an administrator.',dedupeKey:`account-control:${user.id}:${Date.now()}`,actionUrl:'/tier'});
       if(input.manualBalance){
-        const {accountMode,currency,amount,type,note,settlementReference}=input.manualBalance;
+        const {accountMode,currency,amount,type,note,idempotencyKey}=input.manualBalance;
         const adjustmentId=randomUUID();
         const normalisedCurrency=currency.toUpperCase();
         const userAccount=await ensureUserLedger(tx,user.id,accountMode,normalisedCurrency);
-        if(accountMode==='REAL'&&type==='CREDIT'){
-          const previousCredit=await tx.auditLog.findFirst({where:{OR:[{action:'REAL_BALANCE_CREDIT',metadata:{path:['settlementReference'],equals:settlementReference}},{action:'FUNDING_APPROVED',entity:'FUNDING',metadata:{path:['transactionReference'],equals:settlementReference}}]}});
-          if(previousCredit)throw new Error('REAL_SETTLEMENT_REFERENCE_REUSED');
+        const configuredRealCredit=accountMode==='REAL'&&type==='CREDIT';
+        let fundingRequest:null|Awaited<ReturnType<typeof tx.fundingRequest.create>>=null;
+        let creditAlreadyApplied=false;
+        if(configuredRealCredit){
+          if(!idempotencyKey)throw new Error('IDEMPOTENCY_KEY_REQUIRED');
+          const previous=await tx.fundingRequest.findUnique({where:{idempotencyKey}});
+          if(previous){
+            if(previous.userId!==user.id||previous.type!=='DEPOSIT'||previous.accountMode!=='REAL'||previous.status!=='APPROVED'||previous.method!=='Admin configured simulated REAL deposit'||!previous.amount.equals(amount)||!previous.creditedAmount?.equals(amount))throw new Error('IDEMPOTENCY_KEY_REUSED');
+            creditAlreadyApplied=true;
+          }else{
+            const reviewedAt=new Date();
+            fundingRequest=await tx.fundingRequest.create({data:{userId:user.id,type:'DEPOSIT',method:'Admin configured simulated REAL deposit',amount:new Prisma.Decimal(amount),creditedAmount:new Prisma.Decimal(amount),currency:normalisedCurrency,status:'APPROVED',accountMode:'REAL',idempotencyKey,adminNote:note||'Configured simulated REAL deposit credit',reviewedAt}});
+          }
         }
-        const adminReserve=await ensureSystemAccount(tx,`SYSTEM:ADMIN:${accountMode}:${normalisedCurrency}`,`Admin ${accountMode} adjustment clearing`,normalisedCurrency,accountMode);
-        if(type==='DEBIT'){
-          const available=await balance(tx,userAccount.id);
-          if(available.lt(amount))throw new Error('INSUFFICIENT_LEDGER_BALANCE');
-          await postDoubleEntry(tx,{reference:`ADMIN_ADJUST_DEBIT:${user.id}:${adjustmentId}`,description:note||'Administrator DEMO balance adjustment',debitAccountId:userAccount.id,creditAccountId:adminReserve.id,amount});
-        }else{
-          await postDoubleEntry(tx,{reference:`ADMIN_ADJUST_CREDIT:${user.id}:${adjustmentId}`,description:note||'Administrator DEMO virtual balance credit',debitAccountId:adminReserve.id,creditAccountId:userAccount.id,amount});
+        if(!creditAlreadyApplied){
+          const adminReserve=await ensureSystemAccount(tx,configuredRealCredit?`SYSTEM:CONFIGURED:REAL:${normalisedCurrency}`:`SYSTEM:ADMIN:${accountMode}:${normalisedCurrency}`,configuredRealCredit?'Configured simulated REAL balance':`Admin ${accountMode} adjustment clearing`,normalisedCurrency,accountMode);
+          if(type==='DEBIT'){
+            const available=await balance(tx,userAccount.id);
+            if(available.lt(amount))throw new Error('INSUFFICIENT_LEDGER_BALANCE');
+            await postDoubleEntry(tx,{reference:`ADMIN_ADJUST_DEBIT:${user.id}:${adjustmentId}`,description:note||'Administrator DEMO balance adjustment',debitAccountId:userAccount.id,creditAccountId:adminReserve.id,amount});
+          }else{
+            await postDoubleEntry(tx,{reference:fundingRequest?`FUNDING:${fundingRequest.id}:APPROVED`:`ADMIN_ADJUST_CREDIT:${user.id}:${adjustmentId}`,description:configuredRealCredit?'Configured simulated REAL deposit credit':note||'Administrator DEMO virtual balance credit',debitAccountId:adminReserve.id,creditAccountId:userAccount.id,amount});
+          }
+          const action=configuredRealCredit?'REAL_BALANCE_CREDIT':type==='CREDIT'?'USER_BALANCE_CREDIT':'USER_BALANCE_DEBIT';
+          await tx.auditLog.create({data:{actorId:admin.id,action,entity:'LEDGER_ACCOUNT',entityId:userAccount.id,metadata:{userId:user.id,accountMode,currency:normalisedCurrency,amount:String(amount),note:note||null,simulated:configuredRealCredit,fundingRequestId:fundingRequest?.id??null,idempotencyKey:configuredRealCredit?idempotencyKey:null}}});
+          if(fundingRequest)await tx.auditLog.create({data:{actorId:admin.id,action:'FUNDING_APPROVED',entity:'FUNDING',entityId:fundingRequest.id,metadata:{type:'DEPOSIT',accountMode:'REAL',currency:normalisedCurrency,requestedAmount:String(amount),creditedAmount:String(amount),simulated:true,source:'ADMIN_CONFIGURED_REAL_CREDIT'}}});
+          const description=`${normalisedCurrency} ${Number(amount).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+          const message=configuredRealCredit?`An administrator credited ${description} to your simulated/configured REAL balance. This is an internal ledger entry; no payment was processed and no money moved.`:type==='CREDIT'?`An administrator added ${description} in virtual funds to your DEMO account. No real funds were transferred.`:`An administrator adjusted your DEMO virtual balance by ${description}. No real funds were transferred.`;
+          await createNotification(tx,{userId:user.id,type:configuredRealCredit?NotificationType.DEPOSIT:NotificationType.SYSTEM,title:configuredRealCredit?'Simulated REAL deposit credited':type==='CREDIT'?'DEMO virtual balance updated':'DEMO virtual balance adjusted',message,dedupeKey:fundingRequest?`funding:${fundingRequest.id}:approved`:`admin-adjust:${user.id}:${adjustmentId}`,relatedEntity:fundingRequest?'FUNDING':undefined,relatedId:fundingRequest?.id,actionUrl:fundingRequest?`/wallet/transactions/${fundingRequest.id}`:'/wallet'});
         }
-        const action=accountMode==='REAL'?'REAL_BALANCE_CREDIT':type==='CREDIT'?'USER_BALANCE_CREDIT':'USER_BALANCE_DEBIT';
-        await tx.auditLog.create({data:{actorId:admin.id,action,entity:'LEDGER_ACCOUNT',entityId:userAccount.id,metadata:{userId:user.id,accountMode,currency:normalisedCurrency,amount:String(amount),note:note||null,settlementReference:accountMode==='REAL'?settlementReference:null}}});
-        const description=`${normalisedCurrency} ${Number(amount).toLocaleString(undefined,{maximumFractionDigits:2})}`;
-        const message=accountMode==='REAL'?`An administrator verified external settlement ${settlementReference} and credited ${description} to your REAL account.`:type==='CREDIT'?`An administrator added ${description} in virtual funds to your DEMO account. No real funds were transferred.`:`An administrator adjusted your DEMO virtual balance by ${description}. No real funds were transferred.`;
-        await createNotification(tx,{userId:user.id,type:NotificationType.SYSTEM,title:accountMode==='REAL'?'REAL account credited':type==='CREDIT'?'DEMO virtual balance updated':'DEMO virtual balance adjusted',message,dedupeKey:`admin-adjust:${user.id}:${adjustmentId}`,actionUrl:'/wallet'});
       }
       return user;
     },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
@@ -95,7 +108,7 @@ export async function PATCH(req:Request){
     if(error instanceof Error&&error.message==='APPROVED_IDENTITY_DOCUMENT_REQUIRED')return NextResponse.json({error:'Approve an identity document before approving account verification.'},{status:409});
     if(error instanceof Error&&error.message==='REAL_KYC_REQUIRED')return NextResponse.json({error:'Approved identity verification is required before crediting a REAL account.'},{status:409});
     if(error instanceof Error&&error.message==='INSUFFICIENT_LEDGER_BALANCE')return NextResponse.json({error:'The account does not have enough available balance for this adjustment.'},{status:409});
-    if(error instanceof Error&&error.message==='REAL_SETTLEMENT_REFERENCE_REUSED')return NextResponse.json({error:'This external settlement reference has already been credited to this account.'},{status:409});
+    if(error instanceof Error&&['IDEMPOTENCY_KEY_REQUIRED','IDEMPOTENCY_KEY_REUSED'].includes(error.message))return NextResponse.json({error:error.message==='IDEMPOTENCY_KEY_REQUIRED'?'A unique credit request key is required.':'This credit request key has already been used for another adjustment.'},{status:409});
     return NextResponse.json({error:'Unable to update this account.'},{status:400});
   }
 }

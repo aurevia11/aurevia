@@ -51,8 +51,8 @@ export async function GET(){
 				connected:funding.connected,
 				workflowEnabled:funding.workflowEnabled,
 				checkedAt:funding.checkedAt,
-				manualDepositReviewEnabled:true,
-				realDepositsRequireExternalReferenceAndUploadedEvidence:true,
+				configuredSimulatedRealCreditsEnabled:true,
+				realMoneyMovementEnabled:false,
 			},
 			investments:{
 				status:'NOT_CONFIGURED',

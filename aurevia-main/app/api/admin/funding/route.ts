@@ -32,37 +32,31 @@ export async function PATCH(req:Request){
 	try{
 		const admin=await requireAdmin();
 		const input=schema.parse(await req.json());
-		const candidate=await db.fundingRequest.findUnique({where:{id:input.id},select:{id:true,userId:true,type:true,accountMode:true,status:true,receiptKey:true,transactionReference:true}});
+		const candidate=await db.fundingRequest.findUnique({where:{id:input.id},select:{id:true,userId:true,type:true,accountMode:true,status:true}});
 		if(candidate?.accountMode===AccountMode.REAL&&input.decision==='APPROVED'&&candidate.type===FundingType.WITHDRAWAL){
 			await db.auditLog.create({data:{actorId:admin.id,action:'REAL_WITHDRAWAL_APPROVAL_BLOCKED',entity:'FUNDING',entityId:candidate.id,metadata:{accountMode:AccountMode.REAL,reason:'PAYOUT_PROVIDER_UNAVAILABLE'}}});
 			return NextResponse.json({error:'REAL_WITHDRAWAL_PROVIDER_UNAVAILABLE'},{status:409});
 		}
-		if(candidate?.accountMode===AccountMode.REAL&&input.decision==='APPROVED'&&candidate.type===FundingType.DEPOSIT&&(!candidate.receiptKey||!candidate.transactionReference||candidate.transactionReference.trim().length<4))return NextResponse.json({error:'REAL_DEPOSIT_VERIFICATION_REQUIRED'},{status:409});
 		const request=await db.$transaction(async tx=>{
 			const current=await tx.fundingRequest.findUnique({where:{id:input.id}});
 			if(!current||!pendingStatuses.includes(current.status))throw new Error('FUNDING_NOT_PENDING');
 			const creditedAmount=input.creditedAmount??Number(current.amount);
 			if(creditedAmount>Number(current.amount))throw new Error('CREDIT_EXCEEDS_REQUEST');
 			if(current.accountMode===AccountMode.REAL){
-				if(current.type===FundingType.DEPOSIT){
-					const transactionReference=current.transactionReference?.trim();
-					if(!current.receiptKey||!transactionReference||transactionReference.length<4)throw new Error('REAL_DEPOSIT_VERIFICATION_REQUIRED');
-					const existingRealCredit=await tx.auditLog.findFirst({where:{OR:[{action:'REAL_BALANCE_CREDIT',metadata:{path:['settlementReference'],equals:transactionReference}},{action:'FUNDING_APPROVED',entity:'FUNDING',metadata:{path:['transactionReference'],equals:transactionReference}}]}});
-					if(existingRealCredit)throw new Error('REAL_SETTLEMENT_REFERENCE_REUSED');
-				}
 				const fundingUser=await tx.user.findUnique({where:{id:current.userId},select:{kycStatus:true,withdrawalEnabled:true,accountRestricted:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true},take:1}}});
 				if(fundingUser?.kycStatus!=='APPROVED'||!fundingUser.kyc?.submittedAt||fundingUser.kycDocuments.length===0)throw new Error('REAL_KYC_REQUIRED');
 				if(current.type===FundingType.WITHDRAWAL&&(!fundingUser.withdrawalEnabled||fundingUser.accountRestricted))throw new Error('WITHDRAWAL_RESTRICTED');
 			}
 			const approvedCredit=current.type===FundingType.DEPOSIT&&input.decision==='APPROVED'?new Prisma.Decimal(creditedAmount):null;
-			const changed=await tx.fundingRequest.updateMany({where:{id:current.id,status:{in:pendingStatuses}},data:{status:input.decision,adminNote:input.note||null,reviewedAt:new Date(),verifiedAt:input.decision==='APPROVED'&&current.type===FundingType.DEPOSIT?new Date():null,creditedAmount:approvedCredit}});
+			const reviewedAt=new Date();
+			const changed=await tx.fundingRequest.updateMany({where:{id:current.id,status:{in:pendingStatuses}},data:{status:input.decision,adminNote:input.note||null,reviewedAt,verifiedAt:null,creditedAmount:approvedCredit}});
 			if(changed.count!==1)throw new Error('FUNDING_ALREADY_REVIEWED');
 			if(input.decision==='APPROVED'){
 				const account=await ensureUserLedger(tx,current.userId,current.accountMode,current.currency);
-				const systemCode=`SYSTEM:EXTERNAL:${current.accountMode}:${current.currency}`;
-				const system=await ensureSystemAccount(tx,systemCode,'External funds',current.currency,current.accountMode);
+				const systemCode=current.accountMode===AccountMode.REAL?`SYSTEM:CONFIGURED:REAL:${current.currency}`:`SYSTEM:EXTERNAL:${current.accountMode}:${current.currency}`;
+				const system=await ensureSystemAccount(tx,systemCode,current.accountMode===AccountMode.REAL?'Configured simulated REAL funds':'Demo virtual funds',current.currency,current.accountMode);
 				if(current.type===FundingType.DEPOSIT){
-					await postDoubleEntry(tx,{reference:`FUNDING:${current.id}:APPROVED`,description:current.accountMode===AccountMode.REAL?'Admin manually verified deposit':'Approved demo deposit',debitAccountId:system.id,creditAccountId:account.id,amount:approvedCredit!});
+					await postDoubleEntry(tx,{reference:`FUNDING:${current.id}:APPROVED`,description:current.accountMode===AccountMode.REAL?'Admin credited configured simulated REAL deposit':'Approved demo deposit',debitAccountId:system.id,creditAccountId:account.id,amount:approvedCredit!});
 				}else{
 					const available=await balance(tx,account.id);
 					if(available.lt(current.amount))throw new Error('INSUFFICIENT_FUNDS');
@@ -70,10 +64,10 @@ export async function PATCH(req:Request){
 				}
 			}
 			const updated=await tx.fundingRequest.findUniqueOrThrow({where:{id:current.id}});
-			await tx.auditLog.create({data:{actorId:admin.id,action:`FUNDING_${input.decision}`,entity:'FUNDING',entityId:updated.id,metadata:{type:updated.type,accountMode:updated.accountMode,currency:updated.currency,requestedAmount:updated.amount.toString(),creditedAmount:updated.creditedAmount?.toString()??null,transactionReference:updated.transactionReference}}});
+			await tx.auditLog.create({data:{actorId:admin.id,action:`FUNDING_${input.decision}`,entity:'FUNDING',entityId:updated.id,metadata:{type:updated.type,accountMode:updated.accountMode,currency:updated.currency,requestedAmount:updated.amount.toString(),creditedAmount:updated.creditedAmount?.toString()??null,simulated:updated.accountMode===AccountMode.REAL||updated.accountMode===AccountMode.DEMO,transactionReference:updated.transactionReference}}});
 			const notificationType=updated.type===FundingType.DEPOSIT?NotificationType.DEPOSIT:NotificationType.WITHDRAWAL;
 			const decisionLabel=input.decision==='APPROVED'?'approved':'rejected';
-			await createNotification(tx,{userId:updated.userId,type:notificationType,title:`${updated.type==='DEPOSIT'?'Deposit':'Withdrawal'} ${decisionLabel}`,message:updated.type==='DEPOSIT'&&input.decision==='APPROVED'&&updated.accountMode===AccountMode.REAL?`Your deposit was manually verified and ${updated.creditedAmount?.toString()||updated.amount.toString()} ${updated.currency} was posted to your real-account ledger. This is not a blockchain confirmation.`:updated.type==='DEPOSIT'&&input.decision==='APPROVED'?`Your demo deposit request was approved and ${updated.creditedAmount?.toString()||updated.amount.toString()} ${updated.currency} was posted to your demo ledger.`:`Your ${updated.type.toLowerCase()} request was ${decisionLabel}.${input.note?` Admin note: ${input.note}`:''}`,dedupeKey:`funding:${updated.id}:${decisionLabel}`,relatedEntity:'FUNDING',relatedId:updated.id,actionUrl:`/wallet/transactions/${updated.id}`});
+			await createNotification(tx,{userId:updated.userId,type:notificationType,title:`${updated.type==='DEPOSIT'?'Deposit':'Withdrawal'} ${decisionLabel}`,message:updated.type==='DEPOSIT'&&input.decision==='APPROVED'&&updated.accountMode===AccountMode.REAL?`Your configured REAL balance was credited by ${updated.creditedAmount?.toString()||updated.amount.toString()} ${updated.currency}. This is a simulated ledger entry; no payment was processed and no money moved.`:updated.type==='DEPOSIT'&&input.decision==='APPROVED'?`Your DEMO deposit request was credited by ${updated.creditedAmount?.toString()||updated.amount.toString()} ${updated.currency} in the simulated ledger.`:`Your ${updated.type.toLowerCase()} request was ${decisionLabel}.${input.note?` Admin note: ${input.note}`:''}`,dedupeKey:`funding:${updated.id}:${decisionLabel}`,relatedEntity:'FUNDING',relatedId:updated.id,actionUrl:`/wallet/transactions/${updated.id}`});
 			return updated;
 		},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
 		const user=await db.user.findUnique({where:{id:request.userId},select:{email:true}});
@@ -82,7 +76,7 @@ export async function PATCH(req:Request){
 		return NextResponse.json({...jsonSafe(safeRequest),hasReceipt:!!receiptKey,emailDelivery:delivery.sent?'sent':delivery.reason||'failed'},{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){
 		if(error instanceof ZodError)return NextResponse.json({error:'Invalid review details.'},{status:400});
-		if(error instanceof Error&&['FUNDING_NOT_PENDING','FUNDING_ALREADY_REVIEWED','INSUFFICIENT_FUNDS','REAL_KYC_REQUIRED','WITHDRAWAL_RESTRICTED','REAL_DEPOSIT_VERIFICATION_REQUIRED','CREDIT_EXCEEDS_REQUEST','REAL_SETTLEMENT_REFERENCE_REUSED'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:409});
+		if(error instanceof Error&&['FUNDING_NOT_PENDING','FUNDING_ALREADY_REVIEWED','INSUFFICIENT_FUNDS','REAL_KYC_REQUIRED','WITHDRAWAL_RESTRICTED','CREDIT_EXCEEDS_REQUEST'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:409});
 		return NextResponse.json({error:'Funding review failed.'},{status:400});
 	}
 }

@@ -400,7 +400,7 @@ const base = {
   walletSubtitle: "Demo balances and funding activity are isolated from real accounts.",
   walletTitle: "Account funds",
   walletHeader: "Wallet & funding",
-  realFundingNotice: "Real-account funding stays pending until administrator review.",
+  realFundingNotice: "REAL balance credits are simulated/configured ledger entries. Administrator review changes the internal balance only; no payment is processed or money moved.",
   availableBalances: "Available {mode} balances",
   walletDemoNote: "Only approved ledger entries are included. Pending withdrawals are reserved below.",
   enabledPaymentMethods: "Enabled payment methods",
