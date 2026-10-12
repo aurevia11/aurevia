@@ -1,8 +1,9 @@
 'use client';
 
-import {useEffect,useState} from 'react';
+import {useEffect,useMemo,useState} from 'react';
 import {QueryClient,QueryClientProvider,useQuery} from '@tanstack/react-query';
 import {useSession} from 'next-auth/react';
+import {io,type Socket} from 'socket.io-client';
 import {Activity,ArrowDown,ArrowLeftRight,ArrowUp,Check,ChevronDown,ChevronLeft,ChevronRight,GripVertical,ListPlus,Plus,RefreshCw,Search,Star,Trash2,X} from 'lucide-react';
 import Nav from '@/components/Nav';
 import LivePriceChart from '@/components/LivePriceChart';
@@ -34,6 +35,8 @@ function LiveMarketDashboardContent(){
   const removeSymbol=useMarketWatchlists(state=>state.removeSymbol);
   const reorderSymbol=useMarketWatchlists(state=>state.reorderSymbol);
   const [timeframe,setTimeframe]=useState<TimeframeId>('1d');
+  const [streamStatus,setStreamStatus]=useState<'connecting'|'connected'|'offline'>('connecting');
+  const [streamUpdates,setStreamUpdates]=useState<Record<string, Partial<MarketQuote>>>({});
   const [sidebarOpen,setSidebarOpen]=useState(false);
   const [showAddSymbol,setShowAddSymbol]=useState(false);
   const [showNewList,setShowNewList]=useState(false);
@@ -54,11 +57,44 @@ function LiveMarketDashboardContent(){
   },refetchInterval:5_000});
   const historyQuery=useQuery({queryKey:['live-market-history',selectedAsset.id,timeframe],queryFn:()=>fetchHistory(selectedAsset.id,timeframe),refetchInterval:timeframe==='1d'||timeframe==='5d'?15_000:60_000});
   const annualQuery=useQuery({queryKey:['live-market-history',selectedAsset.id,'1y'],queryFn:()=>fetchHistory(selectedAsset.id,'1y'),refetchInterval:60_000,staleTime:45_000,enabled:timeframe!=='1y'});
-  const activeQuote=getQuote(selectedQuery.data,selectedAsset.id)||historyQuery.data?.quote;
-  const batchQuotes=new Map((batchQuery.data?.quotes||[]).map(item=>[item.asset.id,item]));
+  const batchQuotes=useMemo(()=>{
+    const map=new Map((batchQuery.data?.quotes||[]).map(item=>[item.asset.id,item]));
+    for(const [symbol,streamQuote] of Object.entries(streamUpdates)){
+      const current=map.get(symbol);
+      if(current&&isQuote(current)&&streamQuote.price!==undefined){
+        map.set(symbol,{...current,price:streamQuote.price,change:streamQuote.change ?? current.change,changePercent:streamQuote.changePercent ?? current.changePercent,updatedAt:streamQuote.updatedAt ?? current.updatedAt,source:streamQuote.source ?? current.source,isStale:false});
+      }else if(streamQuote.asset){
+        map.set(symbol,streamQuote as MarketQuote);
+      }
+    }
+    return map;
+  },[batchQuery.data?.quotes,streamUpdates]);
+  const activeQuote=(batchQuotes.get(selectedAsset.id) && isQuote(batchQuotes.get(selectedAsset.id)) ? batchQuotes.get(selectedAsset.id) as MarketQuote : getQuote(selectedQuery.data,selectedAsset.id)) || historyQuery.data?.quote;
   const error=historyQuery.error instanceof Error?historyQuery.error.message:selectedQuery.error instanceof Error?selectedQuery.error.message:'';
 
   useEffect(()=>{if(!getMarketAsset(selectedSymbol))selectSymbol('DJI')},[selectedSymbol,selectSymbol]);
+  useEffect(()=>{
+    const socket:Socket = io({path:'/socket.io',transports:['websocket'],autoConnect:true,reconnection:true,reconnectionDelay:700});
+    const onConnect=()=>setStreamStatus('connected');
+    const onDisconnect=()=>setStreamStatus('offline');
+    const onMarketUpdate=(updates:Array<{symbol:string;price:number;change:number;source:string;dataMode:'SIMULATED'|'LIVE';lastUpdatedAt:string}>)=>{
+      setStreamUpdates(current=>{
+        const next={...current};
+        for(const entry of updates){
+          const asset=getMarketAsset(entry.symbol);
+          if(!asset)continue;
+          const change=entry.change>-1?entry.price-entry.price/(1+entry.change):0;
+          next[entry.symbol]={asset,price:entry.price,change,changePercent:entry.change*100,previousClose:null,open:null,volume:null,dayLow:null,dayHigh:null,fiftyTwoWeekLow:null,fiftyTwoWeekHigh:null,updatedAt:entry.lastUpdatedAt,isStale:false,source:entry.source,sparkline:[]};
+        }
+        return next;
+      });
+    };
+    socket.on('connect',onConnect);
+    socket.on('disconnect',onDisconnect);
+    socket.on('market:update',onMarketUpdate);
+    setStreamStatus(socket.connected?'connected':'connecting');
+    return ()=>{socket.off('connect',onConnect);socket.off('disconnect',onDisconnect);socket.off('market:update',onMarketUpdate);socket.disconnect();};
+  },[]);
   useEffect(()=>{
     if(sessionStatus==='loading')return;
     let active=true;
@@ -94,7 +130,7 @@ function LiveMarketDashboardContent(){
   return <><Nav/><main className="live-market-page">
     <div className="live-market-topline">
       <div className="live-market-heading"><span>MERCADOS GLOBALES <i/> {activeQuote?.isStale?'ÚLTIMO DATO GUARDADO':activeQuote?'DATOS DEL PROVEEDOR':'DATOS NO DISPONIBLES'}</span><h1>Mercados</h1><p>Precios de mercado y gráficos de {activeQuote?.source||'un proveedor disponible'}.</p></div>
-      <div className={`live-source-status ${activeQuote?.isStale?'is-stale':''}`}><span className="live-status-dot"/>{activeQuote?.source||'Proveedor no disponible'} <small>{activeQuote?.isStale?`Último dato guardado · ${formatTime(activeQuote.updatedAt)}`:activeQuote?`Actualizado ${formatTime(activeQuote.updatedAt)}`:'Esperando cotizaciones'}</small></div>
+      <div className={`live-source-status ${activeQuote?.isStale||streamStatus!=='connected'?'is-stale':''} ${streamStatus==='connected'?'is-live':''}`}><span className="live-status-dot"/>{streamStatus==='connected'?'LIVE STREAM':'STREAM OFFLINE'} · {activeQuote?.source||'Proveedor no disponible'} <small>{streamStatus==='connected'?`Actualización en tiempo real · ${formatTime(activeQuote?.updatedAt||new Date().toISOString())}`:activeQuote?.isStale?`Último dato guardado · ${formatTime(activeQuote.updatedAt)}`:activeQuote?`Actualizado ${formatTime(activeQuote.updatedAt)}`:'Esperando cotizaciones'}</small></div>
     </div>
 
     <section className="live-ticker" aria-label="Ticker de mercados">

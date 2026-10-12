@@ -36,6 +36,7 @@
     "react-dom": "19.3.0",
     "recharts": "2.15.0",
     "socket.io": "4.8.1",
+    "socket.io-client": "^4.8.1",
     "tailwind-merge": "2.5.5",
     "three": "0.172.0",
     "tsx": "4.23.15",
