@@ -1,5 +1,5 @@
 import {NextResponse} from 'next/server';
-import {Prisma,FundingStatus,FundingType,NotificationType,KycStatus} from '@prisma/client';
+import {Prisma,FundingStatus,FundingType,InvestmentStatus,NotificationType,KycStatus} from '@prisma/client';
 import {z,ZodError} from 'zod';
 import {requireUser} from '@/lib/auth';
 import {db} from '@/lib/db';
@@ -69,6 +69,7 @@ export async function POST(req:Request){
 			}
 			const fundingUser=await tx.user.findUniqueOrThrow({where:{id:user.id},select:{kycStatus:true,withdrawalEnabled:true,accountRestricted:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true},take:1}}});
 			if(user.accountMode==='REAL'&&(fundingUser.kycStatus!==KycStatus.APPROVED||!fundingUser.kyc?.submittedAt||fundingUser.kycDocuments.length===0))throw new Error('REAL_KYC_REQUIRED');
+			const completedInvestment=await tx.investmentRequest?.findFirst?.({where:{userId:user.id,accountMode:user.accountMode,status:{in:[InvestmentStatus.COMPLETED,InvestmentStatus.SETTLED]}},select:{id:true}}) ?? null;
 			const method=await tx.paymentMethod.findUnique({where:{id:parsed.paymentMethodId}});
 			const methodEnabled=!!method?.enabled&&(parsed.type==='DEPOSIT'?method.depositEnabled:method.withdrawalEnabled);
 			const correctMode=method?.demoOnly===(user.accountMode==='DEMO');
@@ -77,6 +78,7 @@ export async function POST(req:Request){
 			if(amount.lt(method.minimumAmount)||(method.maximumAmount&&amount.gt(method.maximumAmount)))throw new Error('AMOUNT_OUT_OF_RANGE');
 			if(parsed.type==='DEPOSIT'&&!method.demoOnly&&!method.destination&&!method.instructions)throw new Error('PAYMENT_INSTRUCTIONS_UNAVAILABLE');
 			if(parsed.type==='WITHDRAWAL'){
+				if(!completedInvestment)throw new Error('FIRST_TRADE_REQUIRED');
 				if(!method.demoOnly&&!parsed.destinationInfo)throw new Error('WITHDRAWAL_DESTINATION_REQUIRED');
 				if(!method.demoOnly&&method.requiresNetwork&&!parsed.network)throw new Error('WITHDRAWAL_NETWORK_REQUIRED');
 				const code=`USER:${user.id}:${user.accountMode}:${currency}`;
@@ -84,7 +86,7 @@ export async function POST(req:Request){
 				const currentBalance=account?await balance(tx,account.id):new Prisma.Decimal(0);
 				const pending=await tx.fundingRequest.aggregate({where:{userId:user.id,accountMode:user.accountMode,currency,type:FundingType.WITHDRAWAL,status:{in:reservingStatuses}},_sum:{amount:true}});
 				const reserved=pending._sum.amount??new Prisma.Decimal(0);
-				if(user.accountMode==='REAL')validateWithdrawal({balance:currentBalance.toString(),pending:reserved.toString(),amount:amount.toString(),withdrawalEnabled:fundingUser.withdrawalEnabled,accountRestricted:fundingUser.accountRestricted,kycStatus:fundingUser.kycStatus});
+				if(user.accountMode==='REAL')validateWithdrawal({balance:currentBalance.toString(),pending:reserved.toString(),amount:amount.toString(),withdrawalEnabled:fundingUser.withdrawalEnabled,accountRestricted:fundingUser.accountRestricted,kycStatus:fundingUser.kycStatus,hasCompletedInvestment:true});
 				else if(currentBalance.lt(amount.plus(reserved)))throw new Error('INSUFFICIENT_AVAILABLE_BALANCE');
 			}
 			const request=await tx.fundingRequest.create({data:{
@@ -120,8 +122,8 @@ export async function POST(req:Request){
 	}catch(error){
 		if(error instanceof ZodError)return NextResponse.json({error:'Check the funding details and try again.'},{status:400});
 		if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')return NextResponse.json({error:'This submission was already received.'},{status:409});
-		const known=['IDEMPOTENCY_KEY_REUSED','PAYMENT_METHOD_UNAVAILABLE','AMOUNT_OUT_OF_RANGE','PAYMENT_INSTRUCTIONS_UNAVAILABLE','WITHDRAWAL_DESTINATION_REQUIRED','WITHDRAWAL_NETWORK_REQUIRED','INSUFFICIENT_AVAILABLE_BALANCE','WITHDRAWAL_DISABLED','ACCOUNT_RESTRICTED','REAL_KYC_REQUIRED','INVALID_AMOUNT'];
-		if(error instanceof Error&&known.includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:error.message==='IDEMPOTENCY_KEY_REUSED'?409:error.message==='ACCOUNT_RESTRICTED'||error.message==='WITHDRAWAL_DISABLED'||error.message==='REAL_KYC_REQUIRED'?403:400});
+		const known=['IDEMPOTENCY_KEY_REUSED','PAYMENT_METHOD_UNAVAILABLE','AMOUNT_OUT_OF_RANGE','PAYMENT_INSTRUCTIONS_UNAVAILABLE','WITHDRAWAL_DESTINATION_REQUIRED','WITHDRAWAL_NETWORK_REQUIRED','INSUFFICIENT_AVAILABLE_BALANCE','WITHDRAWAL_DISABLED','ACCOUNT_RESTRICTED','REAL_KYC_REQUIRED','INVALID_AMOUNT','FIRST_TRADE_REQUIRED'];
+		if(error instanceof Error&&known.includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:error.message==='IDEMPOTENCY_KEY_REUSED'?409:error.message==='ACCOUNT_RESTRICTED'||error.message==='WITHDRAWAL_DISABLED'||error.message==='REAL_KYC_REQUIRED'||error.message==='FIRST_TRADE_REQUIRED'?403:400});
 		const code=error&&typeof error==='object'&&'code' in error?String(error.code):'';
 		if(['P1001','P1002','P1017','P2021','P2022'].includes(code))return NextResponse.json({error:'Funding service is temporarily unavailable.'},{status:503});
 		console.error(`Funding request failed (${/^[A-Z0-9_]{2,32}$/.test(code)?code:error instanceof Error?error.name:'UnknownError'}).`);

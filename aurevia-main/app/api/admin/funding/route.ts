@@ -7,6 +7,7 @@ import {ensureSystemAccount,ensureUserLedger,postDoubleEntry,balance} from '@/li
 import {jsonSafe} from '@/lib/serializers';
 import {createNotification} from '@/lib/notifications';
 import {sendSupportEmail} from '@/lib/email';
+import {validateDepositApproval} from '@/lib/production-policy';
 
 const schema=z.object({id:z.string().min(1),decision:z.enum(['APPROVED','REJECTED']),note:z.string().trim().max(500).optional(),creditedAmount:z.coerce.number().positive().max(100000000).optional()});
 const pendingStatuses:FundingStatus[]=[FundingStatus.PENDING,FundingStatus.PENDING_REVIEW];
@@ -41,6 +42,7 @@ export async function PATCH(req:Request){
 			const current=await tx.fundingRequest.findUnique({where:{id:input.id}});
 			if(!current||!pendingStatuses.includes(current.status))throw new Error('FUNDING_NOT_PENDING');
 			const creditedAmount=input.creditedAmount??Number(current.amount);
+			if(current.type===FundingType.DEPOSIT&&input.decision==='APPROVED')validateDepositApproval(current.amount.toString(),String(creditedAmount));
 			if(creditedAmount>Number(current.amount))throw new Error('CREDIT_EXCEEDS_REQUEST');
 			if(current.accountMode===AccountMode.REAL){
 				const fundingUser=await tx.user.findUnique({where:{id:current.userId},select:{kycStatus:true,withdrawalEnabled:true,accountRestricted:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true},take:1}}});
@@ -76,7 +78,7 @@ export async function PATCH(req:Request){
 		return NextResponse.json({...jsonSafe(safeRequest),hasReceipt:!!receiptKey,emailDelivery:delivery.sent?'sent':delivery.reason||'failed'},{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){
 		if(error instanceof ZodError)return NextResponse.json({error:'Invalid review details.'},{status:400});
-		if(error instanceof Error&&['FUNDING_NOT_PENDING','FUNDING_ALREADY_REVIEWED','INSUFFICIENT_FUNDS','REAL_KYC_REQUIRED','WITHDRAWAL_RESTRICTED','CREDIT_EXCEEDS_REQUEST'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:409});
+		if(error instanceof Error&&['FUNDING_NOT_PENDING','FUNDING_ALREADY_REVIEWED','INSUFFICIENT_FUNDS','REAL_KYC_REQUIRED','WITHDRAWAL_RESTRICTED','CREDIT_EXCEEDS_REQUEST','DEPOSIT_AMOUNT_MISMATCH'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:409});
 		return NextResponse.json({error:'Funding review failed.'},{status:400});
 	}
 }

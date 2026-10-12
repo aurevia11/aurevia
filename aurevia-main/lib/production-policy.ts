@@ -2,9 +2,16 @@ import {AccountMode,Prisma,KycStatus} from '@prisma/client';
 
 export type AccountTier='TIER 1'|'TIER 2'|'TIER 3';
 export type TierContext={accountMode:AccountMode;kycStatus:KycStatus;verificationDocuments:number;verificationSubmitted?:boolean;approvedTier?:number;accountStatus?:string};
-export type WithdrawalValidation={balance:string|number;pending:string|number;amount:string|number;withdrawalEnabled:boolean;accountRestricted?:boolean;kycStatus:KycStatus};
+export type WithdrawalValidation={balance:string|number;pending:string|number;amount:string|number;withdrawalEnabled:boolean;accountRestricted?:boolean;kycStatus:KycStatus;hasCompletedInvestment?:boolean};
 
 const decimal=(value:string|number)=>new Prisma.Decimal(value.toString());
+
+export function validateDepositApproval(requestedAmount:string|number,creditedAmount:string|number){
+	const request=decimal(requestedAmount);
+	const credit=decimal(creditedAmount);
+	if(!credit.equals(request))throw new Error('DEPOSIT_AMOUNT_MISMATCH');
+	return {requestedAmount:request.toString(),creditedAmount:credit.toString()};
+}
 
 export function getAccountTier(context:TierContext):{label:AccountTier;progress:number;eligibleForRealTrading:boolean;verified:boolean}{
 	const verified=context.accountMode===AccountMode.REAL&&context.verificationSubmitted===true&&context.kycStatus===KycStatus.APPROVED&&context.verificationDocuments>0;
@@ -19,6 +26,7 @@ export function validateWithdrawal(input:WithdrawalValidation){
 	const balance=decimal(input.balance);const pending=decimal(input.pending);const amount=decimal(input.amount);
 	if(!input.withdrawalEnabled)throw new Error('WITHDRAWAL_DISABLED');
 	if(input.accountRestricted)throw new Error('ACCOUNT_RESTRICTED');
+	if(input.hasCompletedInvestment===false)throw new Error('FIRST_TRADE_REQUIRED');
 	if(amount.lte(0))throw new Error('INVALID_AMOUNT');
 	if(balance.lt(amount.plus(pending)))throw new Error('INSUFFICIENT_BALANCE');
 	if(input.kycStatus!==KycStatus.APPROVED)throw new Error('REAL_KYC_REQUIRED');

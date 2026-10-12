@@ -1,7 +1,7 @@
 import {describe,expect,it} from 'vitest';
 import {AccountMode,KycStatus} from '@prisma/client';
 import {DEMO_STARTING_BALANCE} from '../lib/ledger';
-import {getAccountTier,validateWithdrawal,verifyKycState} from '../lib/production-policy';
+import {getAccountTier,validateDepositApproval,validateWithdrawal,verifyKycState} from '../lib/production-policy';
 
 describe('production account policy',()=>{
   it('starts every demo account with exactly 5,000 simulated USD',()=>{
@@ -24,10 +24,16 @@ describe('production account policy',()=>{
     expect(approved.verified).toBe(false);
   });
 
-  it('rejects withdrawal when disabled or account restrictions apply',()=>{
-    expect(()=>validateWithdrawal({balance:'100',pending:'10',amount:'101',withdrawalEnabled:true,kycStatus:KycStatus.APPROVED})).toThrow('INSUFFICIENT_BALANCE');
-    expect(()=>validateWithdrawal({balance:'100',pending:'0',amount:'20',withdrawalEnabled:false,kycStatus:KycStatus.APPROVED})).toThrow('WITHDRAWAL_DISABLED');
-    expect(()=>validateWithdrawal({balance:'100',pending:'0',amount:'20',withdrawalEnabled:true,accountRestricted:true,kycStatus:KycStatus.APPROVED})).toThrow('ACCOUNT_RESTRICTED');
+  it('rejects withdrawal when disabled, restricted, or before the first completed investment',()=>{
+    expect(()=>validateWithdrawal({balance:'100',pending:'10',amount:'101',withdrawalEnabled:true,kycStatus:KycStatus.APPROVED,hasCompletedInvestment:true})).toThrow('INSUFFICIENT_BALANCE');
+    expect(()=>validateWithdrawal({balance:'100',pending:'0',amount:'20',withdrawalEnabled:false,kycStatus:KycStatus.APPROVED,hasCompletedInvestment:true})).toThrow('WITHDRAWAL_DISABLED');
+    expect(()=>validateWithdrawal({balance:'100',pending:'0',amount:'20',withdrawalEnabled:true,accountRestricted:true,kycStatus:KycStatus.APPROVED,hasCompletedInvestment:true})).toThrow('ACCOUNT_RESTRICTED');
+    expect(()=>validateWithdrawal({balance:'100',pending:'0',amount:'20',withdrawalEnabled:true,kycStatus:KycStatus.APPROVED,hasCompletedInvestment:false})).toThrow('FIRST_TRADE_REQUIRED');
+  });
+
+  it('requires an exact deposit credit match before approval',()=>{
+    expect(()=>validateDepositApproval('100.00','90.00')).toThrow('DEPOSIT_AMOUNT_MISMATCH');
+    expect(()=>validateDepositApproval('100.00','100.00')).not.toThrow();
   });
 
   it('only treats an approved real-account KYC state as verified',()=>{
