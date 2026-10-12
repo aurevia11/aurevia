@@ -667,7 +667,7 @@ test('account-mode changes refresh and isolate wallet, trade, history, and suppo
 	await page.unroute('**/api/account/mode');
 	await expect(mode).toHaveValue('REAL');
 	await expect(page.getByText('REAL ACCOUNT',{exact:true}).last()).toBeVisible();
-	await expect(page.locator('.wallet-balance-value')).toHaveText('Unavailable');
+	await expect(page.locator('.wallet-balance-value')).toHaveText('0.00 USD');
 	const instrumentsResponse=await page.request.get('/api/market');
 	const instruments=await instrumentsResponse.json();
 	const realOrderResponse=await page.request.post('/api/orders',{data:{instrumentId:instruments[0].id,side:'BUY',type:'MARKET',quantity:1}});

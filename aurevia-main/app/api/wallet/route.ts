@@ -3,7 +3,7 @@ import {Prisma,FundingStatus,FundingType,InvestmentStatus,NotificationType,KycSt
 import {z,ZodError} from 'zod';
 import {requireUser} from '@/lib/auth';
 import {db} from '@/lib/db';
-import {balance} from '@/lib/ledger';
+import {balance,ensureUserLedger} from '@/lib/ledger';
 import {jsonSafe} from '@/lib/serializers';
 import {createNotification} from '@/lib/notifications';
 import {notifyActiveAdmins} from '@/lib/notifications';
@@ -30,6 +30,7 @@ const reservingStatuses=[FundingStatus.PENDING,FundingStatus.PENDING_REVIEW,Fund
 export async function GET(){
 	try{
 		const user=await requireUser();
+		await ensureUserLedger(db,user.id,user.accountMode,'USD');
 		const [accounts,transactions]=await Promise.all([
 			db.ledgerAccount.findMany({where:{userId:user.id,accountMode:user.accountMode},orderBy:{currency:'asc'}}),
 			db.fundingRequest.findMany({where:{userId:user.id,accountMode:user.accountMode},orderBy:{createdAt:'desc'},take:100,include:{paymentMethod:{select:{id:true,name:true}},user:{select:{name:true,email:true}}}}),
