@@ -32,11 +32,14 @@ export async function GET(){
 		const user=await requireUser();
 		const [accounts,transactions]=await Promise.all([
 			db.ledgerAccount.findMany({where:{userId:user.id,accountMode:user.accountMode},orderBy:{currency:'asc'}}),
-			db.fundingRequest.findMany({where:{userId:user.id,accountMode:user.accountMode},orderBy:{createdAt:'desc'},take:100,include:{paymentMethod:{select:{id:true,name:true}}}}),
+			db.fundingRequest.findMany({where:{userId:user.id,accountMode:user.accountMode},orderBy:{createdAt:'desc'},take:100,include:{paymentMethod:{select:{id:true,name:true}},user:{select:{name:true,email:true}}}}),
 		]);
 		const balances=await Promise.all(accounts.map(async account=>({currency:account.currency,balance:await balance(db,account.id)})));
 		const usdBalance=balances.find(item=>item.currency==='USD')?.balance??null;
-		const safeTransactions=transactions.map(({receiptKey,...transaction})=>({...transaction,hasReceipt:!!receiptKey}));
+		const approvals=transactions.length?await db.auditLog.findMany({where:{entity:'FUNDING',entityId:{in:transactions.map(transaction=>transaction.id)},action:'FUNDING_APPROVED'},select:{entityId:true,createdAt:true,actor:{select:{name:true,email:true}}},orderBy:{createdAt:'desc'}}):[];
+		const approvalByRequest=new Map();
+		for(const approval of approvals)if(approval.entityId&&!approvalByRequest.has(approval.entityId))approvalByRequest.set(approval.entityId,{reviewedAt:approval.createdAt,reviewedBy:approval.actor});
+		const safeTransactions=transactions.map(({receiptKey,...transaction})=>({...transaction,hasReceipt:!!receiptKey,...(approvalByRequest.get(transaction.id)||{})}));
 		return NextResponse.json(jsonSafe({accountMode:user.accountMode,balance:usdBalance,balances,transactions:safeTransactions}),{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){
 		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
@@ -52,10 +55,11 @@ export async function POST(req:Request){
 		const parsed=schema.parse(await req.json());
 		const idempotencyKey=req.headers.get('Idempotency-Key');
 		if(!idempotencyKey||idempotencyKey.length>128)return NextResponse.json({error:'A valid idempotency key is required.'},{status:400});
-		if(user.accountMode==='REAL'){
+		if(user.accountMode==='REAL'&&parsed.type==='WITHDRAWAL'){
 			const funding=await getFundingProviderReadiness();
 			if(!funding.workflowEnabled)return NextResponse.json({error:'REAL_FUNDING_PROVIDER_UNAVAILABLE'},{status:503,headers:{'Cache-Control':'private, no-store'}});
 		}
+		if(user.accountMode==='REAL'&&parsed.type==='DEPOSIT'&&(!parsed.transactionReference||parsed.transactionReference.trim().length<4))return NextResponse.json({error:'A valid payment transaction reference is required for REAL deposits.'},{status:400});
 		const currency=parsed.currency.toUpperCase();
 
 		const result=await db.$transaction(async tx=>{

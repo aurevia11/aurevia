@@ -1,6 +1,9 @@
 import {randomUUID} from 'node:crypto';
+import {PrismaClient} from '@prisma/client';
 import {PNG} from 'pngjs';
 import {test,expect,loginAs,logout,waitForStartup,expectNoHorizontalOverflow} from './fixtures';
+import {db} from '../../lib/db';
+import {settleMaturedDemoInvestments} from '../../lib/demo-investment-settlement';
 
 const viewports=[
 	{width:320,height:800},
@@ -695,7 +698,7 @@ test('account-mode changes refresh and isolate wallet, trade, history, and suppo
 	await expect(page.getByRole('button').filter({hasText:subject})).toBeVisible();
 });
 
-test('REAL provider status is admin-only and unconfirmed REAL funding cannot post or settle',async({browser,page})=>{
+test('REAL provider status is admin-only and REAL deposits require evidence while withdrawals remain provider-gated',async({browser,page})=>{
 	await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
 	expect((await page.request.get('/api/admin/providers/status')).status()).toBe(403);
 	expect((await page.request.post('/api/webhooks/broker/unconfigured',{data:{eventId:'synthetic-test-event'}})).status()).toBe(503);
@@ -717,14 +720,14 @@ test('REAL provider status is admin-only and unconfirmed REAL funding cannot pos
 		expect(statusResponse.ok()).toBe(true);
 		const status=await statusResponse.json();
 		expect(status.realExecution).toMatchObject({status:'DISABLED',enabled:false,executionPathEnabled:false,adapterRegistered:false});
-		expect(status.funding).toMatchObject({status:'NOT_CONFIGURED',connected:false,workflowEnabled:false,realDepositsCreditOnlyOnProviderConfirmation:true});
+		expect(status.funding).toMatchObject({status:'NOT_CONFIGURED',connected:false,workflowEnabled:false,manualDepositReviewEnabled:true,realDepositsRequireExternalReferenceAndUploadedEvidence:true});
 		expect(status.investments).toMatchObject({status:'NOT_CONFIGURED',realLifecycleActionsEnabled:false});
 		expect(status.realExecution.configuredVariables).toHaveProperty('BROKER_API_KEY');
 		expect(JSON.stringify(status)).not.toContain('://');
 
 		const depositApproval=await adminPage.request.patch('/api/admin/funding',{data:{id:fixture('REAL_DEPOSIT_ID'),decision:'APPROVED'}});
 		expect(depositApproval.status()).toBe(409);
-		expect((await depositApproval.json()).error).toBe('REAL_DEPOSIT_PROVIDER_UNAVAILABLE');
+		expect((await depositApproval.json()).error).toBe('REAL_DEPOSIT_VERIFICATION_REQUIRED');
 		const withdrawalApproval=await adminPage.request.patch('/api/admin/funding',{data:{id:fixture('REAL_WITHDRAWAL_ID'),decision:'APPROVED'}});
 		expect(withdrawalApproval.status()).toBe(409);
 		expect((await withdrawalApproval.json()).error).toBe('REAL_WITHDRAWAL_PROVIDER_UNAVAILABLE');
@@ -1089,8 +1092,8 @@ test('administrator email sign-in persists through refresh and logout removes ad
 	await expect(page).toHaveURL(/\/login/);
 });
 
-test('admin DEMO ledger funding updates user balance and blocks fictional REAL funding',async({page})=>{
-	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
+test('admin funding updates DEMO and externally settled REAL balances',async({page})=>{
+	await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
 	await selectAccountMode(page,'DEMO');
 	const userId=await page.request.get('/api/auth/session').then(async response=>(await response.json()).user.id as string);
 	const before=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
@@ -1098,11 +1101,16 @@ test('admin DEMO ledger funding updates user balance and blocks fictional REAL f
 	await loginAs(page,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
 	const credited=await page.request.patch('/api/admin/users',{data:{userId,manualBalance:{accountMode:'DEMO',currency:'USD',amount:25.5,type:'CREDIT'}}});
 	expect(credited.status()).toBe(200);
-	const realCredit=await page.request.patch('/api/admin/users',{data:{userId,manualBalance:{accountMode:'REAL',currency:'USD',amount:25.5,type:'CREDIT'}}});
-	expect(realCredit.status()).toBe(409);
-	expect(await realCredit.json()).toMatchObject({error:'REAL balances can only be updated after verified external settlement.'});
+	const settlementReference=`E2E-SETTLEMENT-${randomUUID()}`;
+	const realCredit=await page.request.patch('/api/admin/users',{data:{userId,manualBalance:{accountMode:'REAL',currency:'USD',amount:25.5,type:'CREDIT',settlementReference}}});
+	expect(realCredit.status()).toBe(200);
+	const duplicateRealCredit=await page.request.patch('/api/admin/users',{data:{userId,manualBalance:{accountMode:'REAL',currency:'USD',amount:25.5,type:'CREDIT',settlementReference}}});
+	expect(duplicateRealCredit.status()).toBe(409);
 	await logout(page);
-	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
+	await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
+	await selectAccountMode(page,'REAL');
+	const realBalance=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
+	expect(realBalance).toBeCloseTo(25.5,2);
 	await selectAccountMode(page,'DEMO');
 	const after=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
 	expect(after).toBeCloseTo(before+25.5,2);
@@ -1270,6 +1278,72 @@ test('wallet deposit and withdrawal requests remain pending and idempotent witho
 		const otherWallet=await otherPage.request.get('/api/wallet').then(response=>response.json());
 		expect(otherWallet.transactions).toHaveLength(0);
 	}finally{await otherContext.close();}
+});
+
+test('approved deposit receipts use the credited amount and reviewer audit',async({page})=>{
+	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
+	await selectAccountMode(page,'DEMO');
+	const startingBalance=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
+	const methods=await page.request.get('/api/payment-methods').then(async response=>(await response.json()).methods);
+	const deposit=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'DEPOSIT',paymentMethodId:methods[0].id,amount:100,currency:'USD',transactionReference:`E2E-${randomUUID()}`}});
+	expect(deposit.status()).toBe(201);
+	const request=await deposit.json();
+	await logout(page);
+	await loginAs(page,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
+	const approval=await page.request.patch('/api/admin/funding',{data:{id:request.id,decision:'APPROVED',creditedAmount:61.25,note:'Verified partial settlement'}});
+	expect(approval.status()).toBe(200);
+	expect(Number((await approval.json()).creditedAmount)).toBe(61.25);
+	await logout(page);
+	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
+	await selectAccountMode(page,'DEMO');
+	const wallet=await page.request.get('/api/wallet').then(response=>response.json());
+	expect(Number(wallet.balance)).toBeCloseTo(startingBalance+61.25,2);
+	const transaction=wallet.transactions.find((item:{id:string})=>item.id===request.id);
+	expect(transaction).toMatchObject({status:'APPROVED',creditedAmount:'61.25',reviewedBy:{email:fixture('ADMIN_EMAIL')}});
+	expect(transaction.reviewedAt).toBeTruthy();
+	await page.goto('/wallet');
+	const receiptDetails=page.locator('details').filter({hasText:request.id}).first();
+	await receiptDetails.locator('summary').click();
+	await expect(receiptDetails.getByText('61.25 USD',{exact:true})).toBeVisible();
+	await expect(receiptDetails.getByText('Reviewed by',{exact:true})).toBeVisible();
+	const downloadPromise=page.waitForEvent('download');
+	await receiptDetails.getByRole('button',{name:'Download PDF'}).nth(1).click();
+	expect((await downloadPromise).suggestedFilename()).toContain('approval');
+});
+
+test('matured DEMO investments automatically credit their configured target once',async({page})=>{
+	await loginAs(page,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
+	const opportunityResponse=await page.request.post('/api/admin/investments',{data:{title:'E2E automatic maturity',category:'Simulated Bitcoin',description:'Disposable target return investment for maturity processing coverage.',assetSymbol:'BTC',minimumAmount:10,maximumAmount:1000,targetReturnPercent:15,durationDays:1,startsAt:null,maturesAt:null,riskLevel:'MODERATE',status:'AVAILABLE',demoEligible:true,realEligible:false,requiresApproval:true,targetPrice:null,stopPrice:null}});
+	expect(opportunityResponse.status()).toBe(201);
+	const opportunity=await opportunityResponse.json();
+	await logout(page);
+	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
+	await selectAccountMode(page,'DEMO');
+	const startingBalance=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
+	const requestResponse=await page.request.post('/api/investments',{headers:{'Idempotency-Key':randomUUID()},data:{opportunityId:opportunity.id,amount:500}});
+	expect(requestResponse.status()).toBe(201);
+	const investment=await requestResponse.json();
+	await logout(page);
+	await loginAs(page,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
+	for(const action of ['approve','activate']){
+		const response=await page.request.patch('/api/admin/investments',{data:{requestId:investment.id,action}});
+		expect(response.status()).toBe(200);
+	}
+	const testDatabase=new PrismaClient();
+	try{await testDatabase.investmentRequest.update({where:{id:investment.id},data:{maturesAt:new Date(Date.now()-1000)}});}
+	finally{await testDatabase.$disconnect();}
+	await settleMaturedDemoInvestments();
+	await settleMaturedDemoInvestments();
+	const settled=await db.investmentRequest.findUniqueOrThrow({where:{id:investment.id}});
+	expect(settled.status).toBe('SETTLED');
+	expect(Number(settled.simulatedPayout)).toBe(575);
+	expect(settled.settlementReference).toBe(`DEMO-AUTO-SETTLEMENT:${investment.id}`);
+	await logout(page);
+	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
+	await selectAccountMode(page,'DEMO');
+	const endingBalance=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
+	expect(endingBalance).toBeCloseTo(startingBalance+75,2);
+	expect(await db.ledgerTransaction.count({where:{reference:`INVESTMENT:${investment.id}:PAYOUT`}})).toBe(1);
 });
 
 test('KYC document access is owner-scoped and private Storage fails closed without credentials',async({browser,page})=>{

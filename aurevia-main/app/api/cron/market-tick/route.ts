@@ -1,5 +1,6 @@
 import {NextResponse} from 'next/server';
 import {tickMarkets} from '@/lib/market';
+import {settleMaturedDemoInvestments} from '@/lib/demo-investment-settlement';
 
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
@@ -12,7 +13,8 @@ export async function GET(request:Request){
 	}
 	try{
 		const updates=await tickMarkets();
-		return NextResponse.json({ok:true,updated:updates.length},{headers:{'Cache-Control':'no-store'}});
+		const maturedInvestmentsSettled=await settleMaturedDemoInvestments();
+		return NextResponse.json({ok:true,updated:updates.length,maturedInvestmentsSettled},{headers:{'Cache-Control':'no-store'}});
 	}catch(error){
 		const code=error&&typeof error==='object'&&'code' in error&&/^[A-Z0-9_]{2,32}$/.test(String(error.code))?String(error.code):error instanceof Error?error.name:'UnknownError';
 		console.error(`Scheduled market tick failed (${code}).`);

@@ -3,6 +3,7 @@ import {createServer} from 'http';
 import {Server as IOServer} from 'socket.io';
 import {loadEnvConfig} from '@next/env';
 import {tickMarkets} from './lib/market';
+import {settleMaturedDemoInvestments} from './lib/demo-investment-settlement';
 import {createIndividualTradingApiProviderFromEnvironment} from './lib/providers/alpaca-crypto-provider';
 import {registerExecutionProvider} from './lib/providers/registry';
 import {getServerConfiguration} from './lib/config/env';
@@ -73,6 +74,12 @@ async function startServer(){
     const data=await tickMarkets();
         consecutiveFailures=0;
     io.emit('market:update',data);
+      try{
+       const maturedInvestmentsSettled=await settleMaturedDemoInvestments();
+       if(maturedInvestmentsSettled)console.log(`Auto-settled ${maturedInvestmentsSettled} matured DEMO investment(s).`);
+      }catch(settlementError){
+       console.error(`Scheduled DEMO investment settlement failed (${safeErrorCode(settlementError)}).`);
+      }
      }catch(error){
         consecutiveFailures++;
         nextDelay=Math.min(intervalMs*2**Math.min(consecutiveFailures,6),60_000);

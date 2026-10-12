@@ -447,6 +447,7 @@ model FundingRequest {
   type FundingType
   method String
   amount Decimal @db.Decimal(30,10)
+  creditedAmount Decimal? @db.Decimal(30,10)
   currency String @default("USD")
   status FundingStatus @default(PENDING)
   accountMode AccountMode @default(DEMO)

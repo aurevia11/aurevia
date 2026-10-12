@@ -3,7 +3,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {writeFile} from 'node:fs/promises';
 import {loadEnvConfig} from '@next/env';
-import {AccountMode,PrismaClient,Role,UserStatus,NotificationType,FundingStatus,FundingType} from '@prisma/client';
+import {AccountMode,PrismaClient,Role,UserStatus,NotificationType,FundingStatus,FundingType,KycStatus} from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import {initializeDemoAccount} from '../../lib/ledger';
 
@@ -69,7 +69,7 @@ export default async function globalSetup(){
 		await db.user.create({data:{id:userId,email:userEmail,name:'Temporary E2E User',country:'Test',passwordHash:await bcrypt.hash(userPassword,10),accountMode:AccountMode.DEMO,status:UserStatus.ACTIVE,verifiedAt:new Date()}});
 		await db.user.create({data:{id:adminId,email:adminEmail,name:'Temporary E2E Administrator',country:'Test',passwordHash:await bcrypt.hash(adminPassword,10),role:Role.ADMIN,accountMode:AccountMode.DEMO,status:UserStatus.ACTIVE,requiresRegistrationVerification:true}});
 		await db.user.create({data:{id:legacyUserId,email:legacyUserEmail,name:'Legacy E2E User',country:'Test',passwordHash:await bcrypt.hash(legacyUserPassword,10),accountMode:AccountMode.DEMO,status:UserStatus.ACTIVE}});
-				await db.user.create({data:{id:investorId,email:investorEmail,name:'Investment E2E User',country:'Test',passwordHash:await bcrypt.hash(investorPassword,10),accountMode:AccountMode.DEMO,status:UserStatus.ACTIVE,verifiedAt:new Date()}});
+				await db.user.create({data:{id:investorId,email:investorEmail,name:'Investment E2E User',country:'Test',passwordHash:await bcrypt.hash(investorPassword,10),accountMode:AccountMode.DEMO,status:UserStatus.ACTIVE,kycStatus:KycStatus.APPROVED,verifiedAt:new Date()}});
 		const instruments=await Promise.all(symbols.map((symbol,index)=>db.instrument.create({data:{symbol,name:`E2E simulated instrument ${index+1}`,baseAsset:`E2E${index+1}`,quoteAsset:'USD',price:index===0?10:20,enabled:true}})));
 		instrumentIds.push(...instruments.map(instrument=>instrument.id));
 		await db.$transaction(async tx=>{

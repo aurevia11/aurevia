@@ -62,7 +62,7 @@ The `/markets` page uses the server-only `FINNHUB_API_KEY` when configured and f
 
 ## Important scope boundary
 
-The platform's funding and market environment is intentionally internal simulation. `BANK_SIM`, `CRYPTO_SIM`, and `INTERNAL_TRANSFER` are not bank, card, blockchain, custody, or exchange integrations. Connecting real customer money or external execution requires regulated providers, KYC/AML/sanctions controls, reconciliation, custody, licensing, security review and jurisdiction-specific compliance.
+DEMO funding and market activity are simulated. REAL deposits can be submitted against administrator-configured payment instructions and are credited only after an administrator verifies the external transaction reference and privately uploaded evidence; the account must also pass the existing KYC checks. Admin credits are ledger-posted and audited, but this is a manual review process, not automatic bank, card, blockchain, or custody-provider confirmation. REAL withdrawals and broker execution remain unavailable until their provider integrations, reconciliation, compliance, and jurisdiction-specific requirements are implemented and enabled. `BANK_SIM`, `CRYPTO_SIM`, and `INTERNAL_TRANSFER` are not external financial integrations.
 
 Two-factor authentication is currently disabled. The legacy database flag is not treated as protection, the profile API reports it as unavailable, and attempts to enable it are rejected until enrollment, login challenges, recovery, and reauthentication are implemented.
 

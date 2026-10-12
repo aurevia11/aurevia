@@ -1,4 +1,4 @@
-import {AccountMode,InvestmentStatus} from '@prisma/client';
+import {AccountMode,InvestmentStatus,Prisma} from '@prisma/client';
 
 export type InvestmentAction='approve'|'reject'|'activate'|'pause'|'complete'|'cancel'|'settle';
 
@@ -26,4 +26,9 @@ export function validateInvestmentSettlement(accountMode:AccountMode,reference:s
   return;
  }
  if(payout===undefined||!Number.isFinite(payout)||payout<0)throw new Error('SIMULATED_PAYOUT_REQUIRED');
+}
+
+export function simulatedInvestmentPayout(principal:Prisma.Decimal,targetReturnPercent:Prisma.Decimal|null){
+ const target=targetReturnPercent??new Prisma.Decimal(0);
+ return principal.mul(new Prisma.Decimal(100).plus(target)).div(100).toDecimalPlaces(10,Prisma.Decimal.ROUND_HALF_UP);
 }
