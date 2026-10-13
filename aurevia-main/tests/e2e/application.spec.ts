@@ -202,7 +202,7 @@ test('dashboard hierarchy remains usable and contained at mobile and desktop wid
 		await page.goto('/dashboard');
 		await expect(page.getByRole('heading',{name:/Hello,/})).toBeVisible();
 		await expect(page.locator('.dashboard-metric')).toHaveCount(6);
-		await expect(page.locator('.dashboard-panel')).toHaveCount(6);
+		await expect(page.locator('.dashboard-panel')).toHaveCount(7);
 		await expectNoHorizontalOverflow(page);
 		const layout=await page.evaluate(()=>{
 			const metrics=document.querySelector('.dashboard-metrics');
@@ -843,6 +843,35 @@ test('DEMO trading supports cash-backed buy and owned-unit sell execution',async
 		await selectAccountMode(page,'DEMO');
 		await expectNoHorizontalOverflow(page);
 	}finally{if(!tradePage.isClosed())await tradePage.close();}
+});
+
+test('dashboard quick trade buys and sells crypto against the DEMO ledger',async({page})=>{
+	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
+	await page.goto('/dashboard');
+	await expect(page.getByRole('heading',{name:'Practice crypto'})).toBeVisible();
+	const wallet=async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
+	const startingBalance=await wallet();
+	const markets=await page.request.get('/api/market').then(response=>response.json());
+	const bitcoin=markets.find((instrument:{id:string;symbol:string})=>instrument.symbol===fixture('CRYPTO_INSTRUMENT'));
+	expect(bitcoin).toBeTruthy();
+	await page.getByRole('combobox',{name:'Crypto'}).selectOption(bitcoin.id);
+	await page.getByLabel('Quantity (BTC)').fill('0.001');
+	const buyResponsePromise=page.waitForResponse(response=>response.url().endsWith('/api/orders')&&response.request().method()==='POST');
+	await page.getByRole('button',{name:'Buy BTC'}).click();
+	const buy=await buyResponsePromise;
+	expect(buy.ok()).toBeTruthy();
+	expect((await buy.json()).status).toBe('FILLED');
+	await expect(page.getByRole('status').filter({hasText:'Bought 0.001 BTC in DEMO'})).toBeVisible();
+	await expect.poll(wallet).toBeLessThan(startingBalance);
+	await page.getByRole('button',{name:'Sell',exact:true}).click();
+	const sellResponsePromise=page.waitForResponse(response=>response.url().endsWith('/api/orders')&&response.request().method()==='POST');
+	await page.getByRole('button',{name:'Sell BTC'}).click();
+	const sell=await sellResponsePromise;
+	expect(sell.ok()).toBeTruthy();
+	expect((await sell.json()).status).toBe('FILLED');
+	await expect(page.getByRole('status').filter({hasText:'Sold 0.001 BTC in DEMO'})).toBeVisible();
+	await expect.poll(wallet).toBeGreaterThan(startingBalance-10);
+	await expect.poll(wallet).toBeLessThan(startingBalance);
 });
 
 test('closing a DEMO position records a sell execution, reconciles portfolio, and notifies',async({page})=>{

@@ -404,6 +404,29 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,su
 .dashboard-metric>div>span{display:block;color:#94a096;font-size:9px}
 .dashboard-metric b{display:block;margin-top:5px;overflow-wrap:anywhere;color:#edf0e9;font-size:clamp(15px,1.5vw,20px);font-weight:550;font-variant-numeric:tabular-nums}
 .dashboard-metric small{display:block;margin-top:4px;color:#77847a;font-size:8px;line-height:1.5}
+.dashboard-crypto-trade{margin-top:13px}
+.crypto-trade-loading{display:flex;min-height:76px;align-items:center;justify-content:center;gap:9px;color:#89968c;font-size:10px}
+.crypto-trade-form{display:grid;gap:13px}
+.crypto-trade-market{display:grid;grid-template-columns:minmax(0,1fr) minmax(140px,.45fr);align-items:end;gap:15px}
+.crypto-trade-market>label,.crypto-trade-controls>label{display:grid;min-width:0;gap:6px;color:#aeb9ae;font-size:9px}
+.crypto-trade-market>div{display:grid;gap:5px;padding-bottom:2px}
+.crypto-trade-market>div>span{color:#89968d;font-size:9px}
+.crypto-trade-market>div>b{color:#eef1e9;font-size:20px;font-weight:550;font-variant-numeric:tabular-nums}
+.crypto-trade-controls{display:grid;grid-template-columns:minmax(170px,.6fr) minmax(180px,1fr);align-items:end;gap:15px}
+.crypto-trade-side{display:grid;grid-template-columns:1fr 1fr;min-height:40px;padding:3px;border:1px solid var(--a-line);border-radius:4px;background:#09130d}
+.crypto-trade-side button{display:flex;min-width:0;align-items:center;justify-content:center;gap:6px;border:0;border-radius:3px;background:transparent;color:#9ca89d;font:inherit;font-size:10px;cursor:pointer}
+.crypto-trade-side button.is-active{background:rgba(145,180,131,.15);color:#b9d6ad}
+.crypto-trade-side button.is-active.is-sell{background:rgba(213,157,145,.13);color:#e1aaa0}
+.crypto-trade-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;padding-top:10px;border-top:1px solid rgba(218,228,218,.075)}
+.crypto-trade-summary>span{display:grid;min-width:0;gap:4px;color:#839086;font-size:8px}
+.crypto-trade-summary b{overflow:hidden;color:#dbe3da;font-size:10px;font-weight:550;font-variant-numeric:tabular-nums;text-overflow:ellipsis;white-space:nowrap}
+.crypto-trade-error,.crypto-trade-notice{margin:0;font-size:9px;line-height:1.5}
+.crypto-trade-error{color:#d9a29a}.crypto-trade-notice{color:#a9c69e}
+.crypto-trade-footer{display:grid;grid-template-columns:minmax(0,1fr) auto 36px;align-items:center;gap:9px}
+.crypto-trade-footer>small{color:#829086;font-size:8px;line-height:1.55}
+.crypto-trade-footer>.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:38px;padding-inline:13px;white-space:nowrap}
+.crypto-trade-refresh{display:grid;width:36px;height:36px;place-items:center;border:1px solid var(--a-line);border-radius:4px;background:rgba(255,255,255,.02);color:#aab6aa;cursor:pointer}
+.crypto-trade-refresh:disabled{opacity:.5;cursor:wait}
 .dashboard-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:stretch;gap:12px;margin-top:13px}
 .dashboard-panel{min-width:0;padding:17px}
 .dashboard-panel-title{display:flex;min-width:0;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:11px}

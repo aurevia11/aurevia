@@ -5,6 +5,7 @@ import Link from 'next/link';
 import {useCallback,useEffect,useState,type ReactNode} from 'react';
 import {Activity,ArrowRight,ArrowUpRight,BadgeCheck,Bell,Building2,CircleDollarSign,Clock3,Eye,Landmark,LineChart,LoaderCircle,ShieldCheck,Sparkles,TrendingUp,UserRound,WalletCards,X} from 'lucide-react';
 import Nav from '@/components/Nav';
+import DashboardCryptoTrade from '@/components/DashboardCryptoTrade';
 import {useQuery} from '@tanstack/react-query';
 import {useLocale} from '@/lib/i18n-context';
 
@@ -37,6 +38,7 @@ export default function DashboardExperience(){
       <Metric icon={Sparkles} label={translate('totalPL')} value={isDemo?signed(locale,String(totalPnl)):translate('unavailable')} detail={isDemo?translate('recordedSimulated'):translate('notIndependentlyValued')} tone={totalPnl>=0?'green':'red'}/>
       <Metric icon={Landmark} label={translate('openPositions')} value={String(data.activePositions)} detail={isDemo?translate('simulatedPositions'):translate('externalPositionsUnavailable')} tone="gold"/>
     </section>
+    {isDemo&&<DashboardCryptoTrade cash={data.cash} onTradeComplete={load}/>}
     <div className="dashboard-grid">
       <section className="dashboard-panel card"><Header icon={LineChart} title={translate('marketOverview')} subtitle={isDemo?translate('simulatedInternal'):translate('externalMarket')} link="/markets" action={<StatusDot stale={false}/>} openLabel={translate('open')}/><div className="market-overview-list">{data.marketInstruments.slice(0,6).map(item=>{const quote=marketQuery.data?.quotes.find(q=>!('error' in q)&&q.asset.id===item.symbol);const liveQuote=quote&&!('error' in quote)?quote:undefined;return <Link href={`/markets?symbol=${item.symbol}`} className="market-row" key={item.symbol}><span><b>{item.symbol}</b><small>{item.name}</small></span>{liveQuote&&Number.isFinite(liveQuote.price)?<><strong>{formatPrice(locale,liveQuote.price)}</strong><em className={liveQuote.changePercent>=0?'text-profit':'text-loss'}>{formatPercent(locale,liveQuote.changePercent)}</em></>:<span className="market-unavailable">—</span>}</Link>})}</div></section>
       <section className="dashboard-panel card"><Header icon={Activity} title={translate('recentActivity')} subtitle={translate('persistedEvents')} link="/activity" openLabel={translate('open')}/><div className="recent-activity-list">{data.activity.length ? data.activity.slice(0,5).map(item=><Link href={item.link} className="recent-activity-row" key={item.id}><span className={`activity-dot activity-${item.category}`}/><span><b>{item.action}</b><small>{item.asset} · {item.source}</small></span><span><em>{item.status}</em><strong className={item.pnl&&Number(item.pnl)<0?'text-loss':item.pnl?'text-profit':''}>{item.pnl===null?'':`${Number(item.pnl)>=0?'+':'−'}${money(locale,item.pnl)}`}</strong></span></Link>) : <Empty icon={Activity} title={translate('noActivity')} text={translate('activityDescription')}/>}</div></section>
