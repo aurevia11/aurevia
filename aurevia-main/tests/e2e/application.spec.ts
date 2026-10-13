@@ -1172,6 +1172,48 @@ test('a normal customer cannot access the administrator dashboard',async({page})
 	await expect(page).toHaveURL(/\/login/);
 });
 
+test('administrator user and KYC actions persist and report protected actions',async({page})=>{
+	await loginAs(page,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
+	const users=await page.request.get('/api/admin/users').then(response=>response.json());
+	const user=users.find((item:{email:string})=>item.email===fixture('USER_EMAIL'));
+	const investor=users.find((item:{email:string})=>item.email===fixture('INVESTOR_EMAIL'));
+	expect(user).toBeTruthy();
+	expect(investor).toBeTruthy();
+	const self=users.find((item:{email:string})=>item.email===fixture('ADMIN_EMAIL'));
+	const selfDemotion=await page.request.patch('/api/admin/users',{data:{userId:self.id,role:'USER'}});
+	expect(selfDemotion.status()).toBe(409);
+	expect((await selfDemotion.json()).error).toContain('cannot freeze or demote your own');
+	const frozen=await page.request.patch('/api/admin/users',{data:{userId:user.id,status:'FROZEN'}});
+	expect(frozen.ok()).toBeTruthy();
+	await page.goto('/admin');
+	const usersPanel=page.getByRole('heading',{name:'Users',exact:true}).locator('..');
+	const userRow=usersPanel.getByText(fixture('USER_EMAIL'),{exact:true}).first().locator('xpath=../..');
+	await expect(userRow.getByRole('button',{name:'Unfreeze'})).toBeVisible();
+	await userRow.getByRole('button',{name:'Unfreeze'}).click();
+	await expect(userRow.getByRole('button',{name:'Freeze'})).toBeVisible();
+	await userRow.getByRole('button',{name:'Make admin'}).click();
+	await expect(userRow.getByRole('button',{name:'Make user'})).toBeVisible();
+	await userRow.getByRole('button',{name:'Make user'}).click();
+	await expect(userRow.getByRole('button',{name:'Make admin'})).toBeVisible();
+	const kycPanel=page.locator('#kyc-verification');
+	const investorRow=kycPanel.locator('article').filter({hasText:fixture('INVESTOR_EMAIL')}).first();
+	await investorRow.getByRole('button',{name:'Reject',exact:true}).click();
+	await expect.poll(async()=>{
+		const refreshed=await page.request.get('/api/admin/users').then(response=>response.json());
+		return refreshed.find((item:{id:string})=>item.id===investor.id)?.kycStatus;
+	}).toBe('REJECTED');
+	await investorRow.getByRole('button',{name:'Request information'}).click();
+	await expect.poll(async()=>{
+		const refreshed=await page.request.get('/api/admin/users').then(response=>response.json());
+		return refreshed.find((item:{id:string})=>item.id===investor.id)?.kycStatus;
+	}).toBe('NEEDS_CHANGES');
+	await investorRow.getByRole('button',{name:'Approve'}).click();
+	await expect.poll(async()=>{
+		const refreshed=await page.request.get('/api/admin/users').then(response=>response.json());
+		return refreshed.find((item:{id:string})=>item.id===investor.id)?.kycStatus;
+	}).toBe('APPROVED');
+});
+
 test('Nova activity is redacted and visible only to administrators',async({page})=>{
 	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
 	await selectAccountMode(page,'DEMO');
