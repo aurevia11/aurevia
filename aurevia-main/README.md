@@ -26,8 +26,9 @@ Aurevia Invest is a Next.js 14 application using TypeScript, PostgreSQL, Prisma,
 - User list and freeze/unfreeze
 - Role changes
 - KYC profile and private document approval/rejection
-- Account restrictions and withdrawal enablement controls
+- Per-user deposit and withdrawal enablement controls
 - Deposit/withdrawal approval queue
+- Deposit approval posts the exact approved amount to the user's ledger atomically
 - Force-close open positions
 - Instrument enable/disable and configuration API
 - System settings

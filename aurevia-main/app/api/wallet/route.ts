@@ -56,6 +56,11 @@ export async function POST(req:Request){
 		const parsed=schema.parse(await req.json());
 		const idempotencyKey=req.headers.get('Idempotency-Key');
 		if(!idempotencyKey||idempotencyKey.length>128)return NextResponse.json({error:'A valid idempotency key is required.'},{status:400});
+		if(parsed.type==='WITHDRAWAL'){
+			const controls=await db.user.findUniqueOrThrow({where:{id:user.id},select:{withdrawalEnabled:true,accountRestricted:true}});
+			if(!controls.withdrawalEnabled)throw new Error('WITHDRAWAL_DISABLED');
+			if(controls.accountRestricted)throw new Error('ACCOUNT_RESTRICTED');
+		}
 		if(user.accountMode==='REAL'&&parsed.type==='WITHDRAWAL'){
 			const funding=await getFundingProviderReadiness();
 			if(!funding.workflowEnabled)return NextResponse.json({error:'REAL_FUNDING_PROVIDER_UNAVAILABLE'},{status:503,headers:{'Cache-Control':'private, no-store'}});
@@ -68,7 +73,10 @@ export async function POST(req:Request){
 				if(duplicate.userId!==user.id||duplicate.accountMode!==user.accountMode||duplicate.type!==parsed.type||!duplicate.amount.equals(parsed.amount)||duplicate.currency!==currency||duplicate.paymentMethodId!==parsed.paymentMethodId)throw new Error('IDEMPOTENCY_KEY_REUSED');
 				return {request:duplicate,replay:true};
 			}
-			const fundingUser=await tx.user.findUniqueOrThrow({where:{id:user.id},select:{kycStatus:true,withdrawalEnabled:true,accountRestricted:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true},take:1}}});
+			const fundingUser=await tx.user.findUniqueOrThrow({where:{id:user.id},select:{kycStatus:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true},take:1}}});
+			if(parsed.type==='DEPOSIT'&&!fundingUser.depositEnabled)throw new Error('DEPOSITS_DISABLED');
+			if(parsed.type==='WITHDRAWAL'&&!fundingUser.withdrawalEnabled)throw new Error('WITHDRAWAL_DISABLED');
+			if(parsed.type==='WITHDRAWAL'&&fundingUser.accountRestricted)throw new Error('ACCOUNT_RESTRICTED');
 			if(user.accountMode==='REAL'&&(fundingUser.kycStatus!==KycStatus.APPROVED||!fundingUser.kyc?.submittedAt||fundingUser.kycDocuments.length===0))throw new Error('REAL_KYC_REQUIRED');
 			const completedInvestment=await tx.investmentRequest?.findFirst?.({where:{userId:user.id,accountMode:user.accountMode,status:{in:[InvestmentStatus.COMPLETED,InvestmentStatus.SETTLED]}},select:{id:true}}) ?? null;
 			const method=await tx.paymentMethod.findUnique({where:{id:parsed.paymentMethodId}});
@@ -123,8 +131,8 @@ export async function POST(req:Request){
 	}catch(error){
 		if(error instanceof ZodError)return NextResponse.json({error:'Check the funding details and try again.'},{status:400});
 		if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')return NextResponse.json({error:'This submission was already received.'},{status:409});
-		const known=['IDEMPOTENCY_KEY_REUSED','PAYMENT_METHOD_UNAVAILABLE','AMOUNT_OUT_OF_RANGE','PAYMENT_INSTRUCTIONS_UNAVAILABLE','WITHDRAWAL_DESTINATION_REQUIRED','WITHDRAWAL_NETWORK_REQUIRED','INSUFFICIENT_AVAILABLE_BALANCE','WITHDRAWAL_DISABLED','ACCOUNT_RESTRICTED','REAL_KYC_REQUIRED','INVALID_AMOUNT','FIRST_TRADE_REQUIRED'];
-		if(error instanceof Error&&known.includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:error.message==='IDEMPOTENCY_KEY_REUSED'?409:error.message==='ACCOUNT_RESTRICTED'||error.message==='WITHDRAWAL_DISABLED'||error.message==='REAL_KYC_REQUIRED'||error.message==='FIRST_TRADE_REQUIRED'?403:400});
+		const known=['IDEMPOTENCY_KEY_REUSED','PAYMENT_METHOD_UNAVAILABLE','AMOUNT_OUT_OF_RANGE','PAYMENT_INSTRUCTIONS_UNAVAILABLE','WITHDRAWAL_DESTINATION_REQUIRED','WITHDRAWAL_NETWORK_REQUIRED','INSUFFICIENT_AVAILABLE_BALANCE','DEPOSITS_DISABLED','WITHDRAWAL_DISABLED','ACCOUNT_RESTRICTED','REAL_KYC_REQUIRED','INVALID_AMOUNT','FIRST_TRADE_REQUIRED'];
+		if(error instanceof Error&&known.includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:error.message==='IDEMPOTENCY_KEY_REUSED'?409:error.message==='DEPOSITS_DISABLED'||error.message==='ACCOUNT_RESTRICTED'||error.message==='WITHDRAWAL_DISABLED'||error.message==='REAL_KYC_REQUIRED'||error.message==='FIRST_TRADE_REQUIRED'?403:400});
 		const code=error&&typeof error==='object'&&'code' in error?String(error.code):'';
 		if(['P1001','P1002','P1017','P2021','P2022'].includes(code))return NextResponse.json({error:'Funding service is temporarily unavailable.'},{status:503});
 		console.error(`Funding request failed (${/^[A-Z0-9_]{2,32}$/.test(code)?code:error instanceof Error?error.name:'UnknownError'}).`);

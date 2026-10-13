@@ -5,10 +5,11 @@ import {Eye,EyeOff,LoaderCircle,ShieldCheck} from 'lucide-react';
 
 type KycProfile={legalName:string|null;dob:string|null;address:string|null;idType:string|null;idNumber:string|null;submittedAt:string|null;reviewedAt:string|null;reviewNote:string|null};
 type KycDocument={id:string;kind:string;filename:string;mimeType:string;size:number;status:string;uploadedAt:string;reviewedAt:string|null;reviewNote:string|null};
-type ReviewUser={id:string;email:string;name:string|null;country:string|null;phone:string|null;kycStatus:string;withdrawalEnabled:boolean;accountRestricted:boolean;restrictionReason:string|null;kyc:KycProfile|null;kycDocuments:KycDocument[]};
+type ReviewUser={id:string;email:string;name:string|null;country:string|null;phone:string|null;kycStatus:string;accountMode:'DEMO'|'REAL';depositEnabled:boolean;withdrawalEnabled:boolean;accountRestricted:boolean;restrictionReason:string|null;kyc:KycProfile|null;kycDocuments:KycDocument[]};
 
 export default function AdminKycReviewPanel(){
 	const [users,setUsers]=useState<ReviewUser[]>([]);
+	const [allUsers,setAllUsers]=useState<ReviewUser[]>([]);
 	const [notes,setNotes]=useState<Record<string,string>>({});
 	const [restrictionNotes,setRestrictionNotes]=useState<Record<string,string>>({});
 	const [revealed,setRevealed]=useState<string[]>([]);
@@ -25,7 +26,9 @@ export default function AdminKycReviewPanel(){
 			const response=await fetch('/api/admin/users',{cache:'no-store'});
 			const result=await response.json();
 			if(!response.ok)throw new Error(result.error||'Unable to load verification profiles.');
-			const reviewable=(result as ReviewUser[]).filter(user=>user.kyc||user.kycDocuments.length||user.kycStatus!=='PENDING');
+			const accountUsers=result as ReviewUser[];
+			setAllUsers(accountUsers);
+			const reviewable=accountUsers.filter(user=>user.kyc||user.kycDocuments.length||user.kycStatus!=='PENDING');
 			setUsers(reviewable);
 			setNotes(current=>Object.fromEntries(reviewable.map(user=>[user.id,current[user.id]??user.kyc?.reviewNote??''])));
 			setError('');
@@ -67,7 +70,7 @@ export default function AdminKycReviewPanel(){
 		finally{setBusyDocument('')}
 	}
 
-	async function updateControl(user:ReviewUser,field:'withdrawalEnabled'|'accountRestricted',value:boolean){
+	async function updateControl(user:ReviewUser,field:'depositEnabled'|'withdrawalEnabled'|'accountRestricted',value:boolean){
 		setBusyUser(user.id);setError('');setMessage('');
 		try{
 			const response=await fetch('/api/admin/users',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({userId:user.id,[field]:value,...(field==='accountRestricted'&&value?{restrictionReason:restrictionNotes[user.id]?.trim()||'Manual administrator restriction'}:{})})});
@@ -102,5 +105,6 @@ export default function AdminKycReviewPanel(){
 				<div className="mt-3 grid gap-2 border-t border-white/10 pt-3 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:items-end"><label className="account-label text-xs">Restriction reason<input className="input mt-1 min-h-10" maxLength={500} value={restrictionNotes[user.id]??user.restrictionReason??''} onChange={event=>setRestrictionNotes(current=>({...current,[user.id]:event.target.value}))}/></label><button className="btn min-h-10 bg-white/5" type="button" disabled={busyUser===user.id} onClick={()=>void saveRestrictionReason(user)}>Save reason</button><button className="btn min-h-10 bg-white/5" type="button" disabled={busyUser===user.id} onClick={()=>void updateControl(user,'withdrawalEnabled',!user.withdrawalEnabled)}>{user.withdrawalEnabled?'Disable withdrawals':'Enable withdrawals'}</button><button className="btn min-h-10 bg-white/5" type="button" disabled={busyUser===user.id} onClick={()=>void updateControl(user,'accountRestricted',!user.accountRestricted)}>{user.accountRestricted?'Remove restriction':'Restrict account'}</button>{(user.accountRestricted||!user.withdrawalEnabled)&&<p className="text-xs text-loss sm:col-span-4">{user.accountRestricted?'Restricted':''}{user.accountRestricted&&!user.withdrawalEnabled?' · ':''}{!user.withdrawalEnabled?'Withdrawals disabled':''}{user.restrictionReason?` · ${user.restrictionReason}`:''}</p>}</div>
 			</article>;
 		})}</div>:<p className="mt-4 muted">No submitted profiles are awaiting review.</p>}
+		<div className="mt-6 border-t border-white/10 pt-4"><h3 className="font-semibold">User deposit and withdrawal access</h3><p className="mt-1 text-xs muted">These controls apply to both account modes. REAL withdrawals still require a connected payout provider; all withdrawals require a completed investment trade.</p>{allUsers.length?<div className="mt-2 divide-y divide-white/10">{allUsers.map(user=><article key={user.id} className="flex flex-wrap items-center justify-between gap-3 py-3"><div className="min-w-0"><b className="break-all text-sm">{user.name||user.email}</b><p className="text-xs muted">{user.email} · {user.accountMode} · Deposits {user.depositEnabled?'enabled':'disabled'} · Withdrawals {user.withdrawalEnabled?'enabled':'disabled'}</p></div><div className="flex flex-wrap gap-2"><button className="btn min-h-10 bg-white/5" type="button" aria-label={`${user.depositEnabled?'Disable':'Enable'} deposits for ${user.email}`} disabled={busyUser===user.id} onClick={()=>void updateControl(user,'depositEnabled',!user.depositEnabled)}>{user.depositEnabled?'Disable deposits':'Enable deposits'}</button><button className="btn min-h-10 bg-white/5" type="button" aria-label={`${user.withdrawalEnabled?'Disable':'Enable'} withdrawals for ${user.email}`} disabled={busyUser===user.id} onClick={()=>void updateControl(user,'withdrawalEnabled',!user.withdrawalEnabled)}>{user.withdrawalEnabled?'Disable withdrawals':'Enable withdrawals'}</button></div></article>)}</div>:<p className="mt-3 muted">No user accounts found.</p>}</div>
 	</section>;
 }

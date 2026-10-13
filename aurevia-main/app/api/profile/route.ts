@@ -7,7 +7,7 @@ import {createNotification} from '@/lib/notifications';
 import {getAccountTier} from '@/lib/production-policy';
 
 const profileSelect={
-	id:true,email:true,name:true,phone:true,phoneVerified:true,country:true,avatarKey:true,twoFactorEnabled:true,role:true,status:true,accountMode:true,approvedTier:true,kycStatus:true,verifiedAt:true,verifiedChannel:true,withdrawalEnabled:true,accountRestricted:true,restrictionReason:true,updatedAt:true,
+	id:true,email:true,name:true,phone:true,phoneVerified:true,country:true,avatarKey:true,twoFactorEnabled:true,role:true,status:true,accountMode:true,approvedTier:true,kycStatus:true,verifiedAt:true,verifiedChannel:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,restrictionReason:true,updatedAt:true,
 	kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true}},
 	kyc:{select:{address:true,submittedAt:true}},
 } satisfies Prisma.UserSelect;

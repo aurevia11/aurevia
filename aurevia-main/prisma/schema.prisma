@@ -204,6 +204,7 @@ model User {
   verifiedAt DateTime?
   verifiedChannel VerificationChannel?
   requiresRegistrationVerification Boolean @default(false)
+  depositEnabled Boolean @default(true)
   withdrawalEnabled Boolean @default(true)
   accountRestricted Boolean @default(false)
   restrictionReason String?

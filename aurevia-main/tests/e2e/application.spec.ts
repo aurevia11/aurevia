@@ -1293,7 +1293,7 @@ test('DEMO order idempotency prevents duplicate fills and user history stays iso
 	}finally{await otherContext.close();}
 });
 
-test('wallet deposit and withdrawal requests remain pending and idempotent without posting money',async({browser,page})=>{
+test('wallet deposits remain pending and idempotent while withdrawals require a completed investment',async({browser,page})=>{
 	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
 	await selectAccountMode(page,'DEMO');
 	const startingBalance=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
@@ -1314,8 +1314,8 @@ test('wallet deposit and withdrawal requests remain pending and idempotent witho
 	expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(startingBalance);
 
 	const withdrawal=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'WITHDRAWAL',paymentMethodId:method.id,amount:10,currency:'USD'}});
-	expect(withdrawal.status()).toBe(201);
-	expect((await withdrawal.json()).status).toBe('PENDING_REVIEW');
+	expect(withdrawal.status()).toBe(403);
+	expect((await withdrawal.json()).error).toBe('first trade required');
 	expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(startingBalance);
 
 	const otherContext=await browser.newContext();
@@ -1325,6 +1325,43 @@ test('wallet deposit and withdrawal requests remain pending and idempotent witho
 		const otherWallet=await otherPage.request.get('/api/wallet').then(response=>response.json());
 		expect(otherWallet.transactions).toHaveLength(0);
 	}finally{await otherContext.close();}
+});
+
+test('admin funding permissions gate requests and approved deposits credit the user ledger',async({browser,page})=>{
+	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
+	const userProfile=await page.request.get('/api/profile').then(response=>response.json());
+	const startingBalance=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
+	const methods=await page.request.get('/api/payment-methods').then(async response=>(await response.json()).methods);
+	const method=methods.find((item:{depositEnabled:boolean;withdrawalEnabled:boolean})=>item.depositEnabled&&item.withdrawalEnabled);
+	expect(method).toBeTruthy();
+	const adminContext=await browser.newContext();
+	try{
+		const adminPage=await adminContext.newPage();
+		await loginAs(adminPage,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
+		const disabled=await adminPage.request.patch('/api/admin/users',{data:{userId:userProfile.id,depositEnabled:false,withdrawalEnabled:false}});
+		expect(disabled.ok()).toBeTruthy();
+		expect(await disabled.json()).toMatchObject({depositEnabled:false,withdrawalEnabled:false});
+		const accessPanel=adminPage.getByRole('heading',{name:'User deposit and withdrawal access'});
+		await adminPage.goto('/admin');
+		await expect(accessPanel).toBeVisible();
+		await expect(adminPage.getByRole('button',{name:`Enable deposits for ${userProfile.email}`})).toBeVisible();
+		const blockedDeposit=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'DEPOSIT',paymentMethodId:method.id,amount:25,currency:'USD'}});
+		expect(blockedDeposit.status()).toBe(403);
+		expect((await blockedDeposit.json()).error).toBe('deposits disabled');
+		const blockedWithdrawal=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'WITHDRAWAL',paymentMethodId:method.id,amount:10,currency:'USD'}});
+		expect(blockedWithdrawal.status()).toBe(403);
+		expect((await blockedWithdrawal.json()).error).toBe('withdrawal disabled');
+		const enabled=await adminPage.request.patch('/api/admin/users',{data:{userId:userProfile.id,depositEnabled:true,withdrawalEnabled:true}});
+		expect(enabled.ok()).toBeTruthy();
+		const deposit=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'DEPOSIT',paymentMethodId:method.id,amount:25,currency:'USD'}});
+		expect(deposit.status()).toBe(201);
+		const request=await deposit.json();
+		expect(request.status).toBe('PENDING_REVIEW');
+		const approval=await adminPage.request.patch('/api/admin/funding',{data:{id:request.id,decision:'APPROVED',creditedAmount:25}});
+		expect(approval.ok()).toBeTruthy();
+		expect(Number((await approval.json()).creditedAmount)).toBe(25);
+		await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(startingBalance+25);
+	}finally{await adminContext.close();}
 });
 
 test('approved deposit receipts use the credited amount and reviewer audit',async({browser,page})=>{
@@ -1340,21 +1377,21 @@ test('approved deposit receipts use the credited amount and reviewer audit',asyn
 	try{
 		const adminPage=await adminContext.newPage();
 		await loginAs(adminPage,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
-		const approval=await adminPage.request.patch('/api/admin/funding',{data:{id:request.id,decision:'APPROVED',creditedAmount:61.25,note:'Verified partial settlement'}});
+		const approval=await adminPage.request.patch('/api/admin/funding',{data:{id:request.id,decision:'APPROVED',creditedAmount:100,note:'Verified exact requested amount'}});
 		expect(approval.status()).toBe(200);
-		expect(Number((await approval.json()).creditedAmount)).toBe(61.25);
+		expect(Number((await approval.json()).creditedAmount)).toBe(100);
 	}finally{await adminContext.close();}
 	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
 	await selectAccountMode(page,'DEMO');
 	const wallet=await page.request.get('/api/wallet').then(response=>response.json());
-	expect(Number(wallet.balance)).toBeCloseTo(startingBalance+61.25,2);
+	expect(Number(wallet.balance)).toBeCloseTo(startingBalance+100,2);
 	const transaction=wallet.transactions.find((item:{id:string})=>item.id===request.id);
-	expect(transaction).toMatchObject({status:'APPROVED',creditedAmount:'61.25',reviewedBy:{email:fixture('ADMIN_EMAIL')}});
+	expect(transaction).toMatchObject({status:'APPROVED',creditedAmount:'100',reviewedBy:{email:fixture('ADMIN_EMAIL')}});
 	expect(transaction.reviewedAt).toBeTruthy();
 	await page.goto('/wallet');
 	const receiptDetails=page.locator('details').filter({hasText:request.id}).first();
 	await receiptDetails.locator('summary').click();
-	await expect(receiptDetails.getByText('61.25 USD',{exact:true})).toBeVisible();
+	await expect(receiptDetails.getByText('100.00 USD',{exact:true}).last()).toBeVisible();
 	await expect(receiptDetails.getByText('Reviewed by',{exact:true})).toBeVisible();
 	const downloadPromise=page.waitForEvent('download');
 	await receiptDetails.getByRole('button',{name:'Download PDF'}).nth(1).click();
