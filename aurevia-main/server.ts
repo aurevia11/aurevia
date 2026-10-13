@@ -42,65 +42,78 @@ function safeErrorCode(error:unknown){
 }
 
 async function startServer(){
- if(!dev){
-  const missing=['NEXTAUTH_SECRET','NEXTAUTH_URL'].filter(name=>!process.env[name]?.trim());
-  if(missing.length){
-   console.warn(`Missing production configuration: ${missing.join(', ')}. Falling back to safe runtime defaults for this process.`);
-  }
-  for(const [name,value] of [['NEXTAUTH_URL',process.env.NEXTAUTH_URL],['NEXT_PUBLIC_APP_URL',configuredPublicUrl]] as const){
-   if(!value)continue;
-   try{new URL(value)}catch{
-    console.warn(`${name} is not a valid absolute URL; continuing with the fallback runtime value: ${value}`);
-   }
-  }
- }
- try{
-  await app.prepare();
- }catch(error){
-  console.error('Next.js preparation failed; startup aborted', error);
-  process.exit(1);
- }
-
- const http=createServer((req,res)=>handle(req,res));
- const io=new IOServer(http,{cors:{origin:publicUrl,credentials:true}});
- io.on('connection',socket=>{socket.emit('connected',{ok:true});});
-     const intervalMs=Math.max(1000,Number(process.env.MARKET_TICK_MS||2500));
- let running=false;
- let consecutiveFailures=0;
-
- http.once('error',(error:NodeJS.ErrnoException)=>{
-  console.error(error.code==='EADDRINUSE'?'Configured HTTP port is already in use':'HTTP server failed to start');
-  process.exit(1);
- });
-
- http.listen(port,()=>{
-  console.log('Aurevia Invest HTTP server listening');
-    const runMarketTick=async()=>{
-     if(running)return scheduleNextTick(intervalMs);
-   running=true;
-     let nextDelay=intervalMs;
-   try{
-    const data=await tickMarkets();
-        consecutiveFailures=0;
-    io.emit('market:update',data);
-      try{
-       const maturedInvestmentsSettled=await settleMaturedDemoInvestments();
-       if(maturedInvestmentsSettled)console.log(`Auto-settled ${maturedInvestmentsSettled} matured DEMO investment(s).`);
-      }catch(settlementError){
-       console.error(`Scheduled DEMO investment settlement failed (${safeErrorCode(settlementError)}).`);
+  if(!dev){
+    const missing=['NEXTAUTH_SECRET','NEXTAUTH_URL'].filter(name=>!process.env[name]?.trim());
+    if(missing.length){
+      console.warn(`Missing production configuration: ${missing.join(', ')}. Falling back to safe runtime defaults for this process.`);
+    }
+    for(const [name,value] of [['NEXTAUTH_URL',process.env.NEXTAUTH_URL],['NEXT_PUBLIC_APP_URL',configuredPublicUrl]] as const){
+      if(!value)continue;
+      try{new URL(value)}catch{
+        console.warn(`${name} is not a valid absolute URL; continuing with the fallback runtime value: ${value}`);
       }
-     }catch(error){
-        consecutiveFailures++;
-        nextDelay=Math.min(intervalMs*2**Math.min(consecutiveFailures,6),60_000);
-        console.error(`Market tick failed; retrying in ${nextDelay}ms (attempt ${consecutiveFailures}, ${safeErrorCode(error)}).`);
-   }finally{
-    running=false;
-        scheduleNextTick(nextDelay);
-   }
-    };
-    function scheduleNextTick(delay:number){setTimeout(()=>{void runMarketTick()},delay)}
-    scheduleNextTick(0);
- });
+    }
+  }
+
+  let appReady=false;
+  const http=createServer((req,res)=>{
+    if(!appReady){
+      res.writeHead(503,{'Retry-After':'1'}).end('Service starting');
+      return;
+    }
+    handle(req,res);
+  });
+  const io=new IOServer(http,{cors:{origin:publicUrl,credentials:true}});
+  io.on('connection',socket=>{socket.emit('connected',{ok:true});});
+  const intervalMs=Math.max(1000,Number(process.env.MARKET_TICK_MS||2500));
+  let running=false;
+  let consecutiveFailures=0;
+
+  function scheduleNextTick(delay:number){setTimeout(()=>{void runMarketTick()},delay)}
+  const runMarketTick=async()=>{
+    if(running)return scheduleNextTick(intervalMs);
+    running=true;
+    let nextDelay=intervalMs;
+    try{
+      const data=await tickMarkets();
+      consecutiveFailures=0;
+      io.emit('market:update',data);
+      try{
+        const maturedInvestmentsSettled=await settleMaturedDemoInvestments();
+        if(maturedInvestmentsSettled)console.log(`Auto-settled ${maturedInvestmentsSettled} matured DEMO investment(s).`);
+      }catch(settlementError){
+        console.error(`Scheduled DEMO investment settlement failed (${safeErrorCode(settlementError)}).`);
+      }
+    }catch(error){
+      consecutiveFailures++;
+      nextDelay=Math.min(intervalMs*2**Math.min(consecutiveFailures,6),60_000);
+      console.error(`Market tick failed; retrying in ${nextDelay}ms (attempt ${consecutiveFailures}, ${safeErrorCode(error)}).`);
+    }finally{
+      running=false;
+      scheduleNextTick(nextDelay);
+    }
+  };
+  async function prepareApplication(){
+    try{
+      await app.prepare();
+      appReady=true;
+      console.log('Next.js application ready');
+      scheduleNextTick(0);
+    }catch(error){
+      console.error('Next.js preparation failed; startup aborted',error);
+      process.exit(1);
+    }
+  }
+
+  http.once('error',(error:NodeJS.ErrnoException)=>{
+    console.error(error.code==='EADDRINUSE'?'Configured HTTP port is already in use':'HTTP server failed to start');
+    process.exit(1);
+  });
+
+  http.listen(port,'0.0.0.0',()=>{
+    console.log(`Aurevia Invest HTTP server listening on 0.0.0.0:${port}`);
+    void prepareApplication();
+  });
 }
 
 void startServer();
