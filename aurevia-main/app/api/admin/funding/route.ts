@@ -41,6 +41,7 @@ export async function PATCH(req:Request){
 		const request=await db.$transaction(async tx=>{
 			const current=await tx.fundingRequest.findUnique({where:{id:input.id}});
 			if(!current||!pendingStatuses.includes(current.status))throw new Error('FUNDING_NOT_PENDING');
+			if(current.type===FundingType.DEPOSIT&&current.accountMode===AccountMode.REAL&&input.decision==='APPROVED'&&!current.receiptKey)throw new Error('DEPOSIT_RECEIPT_REQUIRED');
 			const creditedAmount=input.creditedAmount??Number(current.amount);
 			if(current.type===FundingType.DEPOSIT&&input.decision==='APPROVED')validateDepositApproval(current.amount.toString(),String(creditedAmount));
 			if(creditedAmount>Number(current.amount))throw new Error('CREDIT_EXCEEDS_REQUEST');
@@ -78,7 +79,7 @@ export async function PATCH(req:Request){
 		return NextResponse.json({...jsonSafe(safeRequest),hasReceipt:!!receiptKey,emailDelivery:delivery.sent?'sent':delivery.reason||'failed'},{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){
 		if(error instanceof ZodError)return NextResponse.json({error:'Invalid review details.'},{status:400});
-		if(error instanceof Error&&['FUNDING_NOT_PENDING','FUNDING_ALREADY_REVIEWED','INSUFFICIENT_FUNDS','REAL_KYC_REQUIRED','WITHDRAWAL_RESTRICTED','CREDIT_EXCEEDS_REQUEST','DEPOSIT_AMOUNT_MISMATCH'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:409});
+		if(error instanceof Error&&['FUNDING_NOT_PENDING','FUNDING_ALREADY_REVIEWED','INSUFFICIENT_FUNDS','REAL_KYC_REQUIRED','WITHDRAWAL_RESTRICTED','CREDIT_EXCEEDS_REQUEST','DEPOSIT_AMOUNT_MISMATCH','DEPOSIT_RECEIPT_REQUIRED'].includes(error.message))return NextResponse.json({error:error.message==='DEPOSIT_RECEIPT_REQUIRED'?'Upload and review payment evidence before approving this REAL deposit.':error.message.replaceAll('_',' ').toLowerCase()},{status:409});
 		return NextResponse.json({error:'Funding review failed.'},{status:400});
 	}
 }

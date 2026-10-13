@@ -724,6 +724,9 @@ test('REAL provider status is admin-only, configured deposit credits work, and w
 		expect(status.realExecution.configuredVariables).toHaveProperty('BROKER_API_KEY');
 		expect(JSON.stringify(status)).not.toContain('://');
 
+		const prooflessDepositApproval=await adminPage.request.patch('/api/admin/funding',{data:{id:fixture('REAL_DEPOSIT_NO_PROOF_ID'),decision:'APPROVED'}});
+		expect(prooflessDepositApproval.status()).toBe(409);
+		expect((await prooflessDepositApproval.json()).error).toContain('Upload and review payment evidence');
 		const depositApproval=await adminPage.request.patch('/api/admin/funding',{data:{id:fixture('REAL_DEPOSIT_ID'),decision:'APPROVED'}});
 		expect(depositApproval.status()).toBe(200);
 		expect(Number((await depositApproval.json()).creditedAmount)).toBe(125);
@@ -1316,6 +1319,10 @@ test('wallet deposits remain pending and idempotent while withdrawals require a 
 	const withdrawal=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'WITHDRAWAL',paymentMethodId:method.id,amount:10,currency:'USD'}});
 	expect(withdrawal.status()).toBe(403);
 	expect((await withdrawal.json()).error).toBe('first trade required');
+	expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(startingBalance);
+	const aboveMethodMaximum=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'DEPOSIT',paymentMethodId:method.id,amount:15000,currency:'USD'}});
+	expect(aboveMethodMaximum.status()).toBe(201);
+	expect((await aboveMethodMaximum.json()).status).toBe('PENDING_REVIEW');
 	expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(startingBalance);
 
 	const otherContext=await browser.newContext();

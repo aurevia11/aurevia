@@ -43,6 +43,7 @@ export default async function globalSetup(){
 	const registrationEmail=`aurevia-e2e-registration-${runId}@example.invalid`;
 	const registrationPassword=`Aa1!${randomBytes(20).toString('hex')}`;
 	let realDepositId='';
+	let realDepositWithoutReceiptId='';
 	let realWithdrawalId='';
 	const symbols=[`E2E${runId.slice(0,6).toUpperCase()}A/USD`,`E2E${runId.slice(0,6).toUpperCase()}B/USD`];
 	const cryptoSymbol=`BTC${runId.slice(0,6).toUpperCase()}/USD`;
@@ -84,12 +85,15 @@ export default async function globalSetup(){
 			for(const [index,title] of ['E2E unread notification one','E2E unread notification two'].entries()){
 				await tx.notification.create({data:{userId,type:NotificationType.SYSTEM,title,message:'Disposable Playwright notification fixture.',dedupeKey:`e2e:${runId}:notification:${index}`}});
 			}
-			const realDeposit=await tx.fundingRequest.create({data:{userId:investorId,type:FundingType.DEPOSIT,method:'UNVERIFIED_EXTERNAL',amount:125,currency:'USD',accountMode:AccountMode.REAL,status:FundingStatus.PENDING_REVIEW,idempotencyKey:`e2e:${runId}:real-deposit`}});
+			const realDeposit=await tx.fundingRequest.create({data:{userId:investorId,type:FundingType.DEPOSIT,method:'UNVERIFIED_EXTERNAL',amount:125,currency:'USD',accountMode:AccountMode.REAL,status:FundingStatus.PENDING_REVIEW,receiptKey:`e2e-receipts/${randomUUID()}.png`,idempotencyKey:`e2e:${runId}:real-deposit`}});
 			realDepositId=realDeposit.id;
+			const realDepositWithoutReceipt=await tx.fundingRequest.create({data:{userId:investorId,type:FundingType.DEPOSIT,method:'UNVERIFIED_EXTERNAL',amount:75,currency:'USD',accountMode:AccountMode.REAL,status:FundingStatus.PENDING_REVIEW,idempotencyKey:`e2e:${runId}:real-deposit-no-proof`}});
+			realDepositWithoutReceiptId=realDepositWithoutReceipt.id;
 			const realWithdrawal=await tx.fundingRequest.create({data:{userId:investorId,type:FundingType.WITHDRAWAL,method:'UNVERIFIED_EXTERNAL',amount:25,currency:'USD',accountMode:AccountMode.REAL,status:FundingStatus.PENDING_REVIEW,idempotencyKey:`e2e:${runId}:real-withdrawal`}});
 			realWithdrawalId=realWithdrawal.id;
 		});
 		process.env.AUREVIA_E2E_REAL_DEPOSIT_ID=realDepositId;
+		process.env.AUREVIA_E2E_REAL_DEPOSIT_NO_PROOF_ID=realDepositWithoutReceiptId;
 		process.env.AUREVIA_E2E_REAL_WITHDRAWAL_ID=realWithdrawalId;
 				const cleanupState={runId,userId,adminId,legacyUserId,investorId,registrationEmail,instrumentIds,paymentMethodId};
 		await writeFile(stateFile,JSON.stringify(cleanupState),{encoding:'utf8',mode:0o600});

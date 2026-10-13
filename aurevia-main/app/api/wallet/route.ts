@@ -84,7 +84,7 @@ export async function POST(req:Request){
 			const correctMode=method?.demoOnly===(user.accountMode==='DEMO');
 			if(!method||!methodEnabled||!method.currencies.includes(currency)||!correctMode)throw new Error('PAYMENT_METHOD_UNAVAILABLE');
 			const amount=new Prisma.Decimal(parsed.amount);
-			if(amount.lt(method.minimumAmount)||(method.maximumAmount&&amount.gt(method.maximumAmount)))throw new Error('AMOUNT_OUT_OF_RANGE');
+			if(parsed.type==='WITHDRAWAL'&&(amount.lt(method.minimumAmount)||(method.maximumAmount&&amount.gt(method.maximumAmount))))throw new Error('AMOUNT_OUT_OF_RANGE');
 			if(parsed.type==='DEPOSIT'&&!method.demoOnly&&!method.destination&&!method.instructions)throw new Error('PAYMENT_INSTRUCTIONS_UNAVAILABLE');
 			if(parsed.type==='WITHDRAWAL'){
 				if(!completedInvestment)throw new Error('FIRST_TRADE_REQUIRED');

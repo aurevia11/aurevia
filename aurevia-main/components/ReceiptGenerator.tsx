@@ -56,7 +56,7 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 				<span className={`shrink-0 border px-3 py-1 text-xs font-bold ${approved?'border-emerald-200 bg-emerald-50 text-emerald-800':'border-amber-200 bg-amber-50 text-amber-800'}`}>{receipt.status}</span>
 			</header>
 			{receipt.accountMode==='REAL'&&<p className="mt-4 border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">SIMULATED / CONFIGURED REAL DEPOSIT · No payment was processed and no money moved.</p>}
-			<div className="py-5"><p className="text-xs font-semibold uppercase text-slate-500">Payment Receipt</p><h3 className="mt-2 text-2xl font-semibold">{approved?'Payment approved':'Payment received'}</h3><p className="mt-1 text-sm text-slate-500">{dateLabel(receipt.createdAt)}</p></div>
+			<div className="py-5"><p className="text-xs font-semibold uppercase text-slate-500">Deposit Receipt</p><h3 className="mt-2 text-2xl font-semibold">{approved?'Deposit approved':'Deposit request received'}</h3><p className="mt-1 text-sm text-slate-500">{dateLabel(receipt.createdAt)}</p></div>
 			<dl className="grid gap-x-8 border-y border-slate-200 py-4 text-sm sm:grid-cols-2">
 				<div className="py-2"><dt className="text-xs text-slate-500">Transaction reference</dt><dd className="mt-1 break-all font-medium">{receipt.reference}</dd></div>
 				{receipt.externalReference&&<div className="py-2"><dt className="text-xs text-slate-500">External payment reference</dt><dd className="mt-1 break-all font-medium">{receipt.externalReference}</dd></div>}
