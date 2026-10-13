@@ -47,6 +47,7 @@ export async function PATCH(req:Request){
     if(input.userId===admin.id&&(input.status==='FROZEN'||input.role==='USER'))throw new Error('CANNOT_DISABLE_CURRENT_ADMIN');
     const updated=await db.$transaction(async tx=>{
       const current=await tx.user.findUniqueOrThrow({where:{id:input.userId},select:{role:true,status:true,kycStatus:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,restrictionReason:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true},take:1}}});
+      if(input.manualBalance&&current.role!=='USER')throw new Error('CUSTOMER_ACCOUNT_REQUIRED');
       const removesActiveAdmin=current.role==='ADMIN'&&current.status==='ACTIVE'&&(input.role==='USER'||input.status==='FROZEN');
       if(removesActiveAdmin&&await tx.user.count({where:{role:'ADMIN',status:'ACTIVE'}})<=1)throw new Error('LAST_ACTIVE_ADMIN_REQUIRED');
       if(input.manualBalance?.accountMode==='REAL'&&(current.kycStatus!=='APPROVED'||!current.kyc?.submittedAt||current.kycDocuments.length===0))throw new Error('REAL_KYC_REQUIRED');
@@ -113,6 +114,7 @@ export async function PATCH(req:Request){
     if(error instanceof Error&&error.message==='FORBIDDEN')return NextResponse.json({error:'Forbidden'},{status:403});
     if(error instanceof Error&&error.message==='CANNOT_DISABLE_CURRENT_ADMIN')return NextResponse.json({error:'You cannot freeze or demote your own administrator account.'},{status:409});
     if(error instanceof Error&&error.message==='LAST_ACTIVE_ADMIN_REQUIRED')return NextResponse.json({error:'Keep at least one active administrator.'},{status:409});
+    if(error instanceof Error&&error.message==='CUSTOMER_ACCOUNT_REQUIRED')return NextResponse.json({error:'Admin balances are separate; select a customer account.'},{status:409});
     if(error instanceof ZodError)return NextResponse.json({error:'Invalid review details.'},{status:400});
     if(error instanceof Error&&error.message==='KYC_STATUS_UNCHANGED')return NextResponse.json({error:'This verification status is already recorded.'},{status:409});
     if(error instanceof Error&&error.message==='APPROVED_IDENTITY_DOCUMENT_REQUIRED')return NextResponse.json({error:'Approve an identity document before approving account verification.'},{status:409});

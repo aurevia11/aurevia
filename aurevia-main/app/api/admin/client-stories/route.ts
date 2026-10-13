@@ -4,6 +4,8 @@ import {z,ZodError} from 'zod';
 import {requireAdmin} from '@/lib/auth';
 import {db} from '@/lib/db';
 import {canPublishClientStory,isVerifiedClientWithdrawal} from '@/lib/client-stories-policy';
+import {resolveClientStoryImage} from '@/lib/client-story-media';
+import {createPrivateSignedUrl} from '@/lib/private-storage';
 import {jsonSafe} from '@/lib/serializers';
 
 const imageReferenceSchema=z.string().max(500).refine(value=>/^(\/client-stories\/[A-Za-z0-9._/-]+|storage:\/\/client-stories\/[A-Za-z0-9._/-]+)$/.test(value)&&!value.includes('..')).nullable();
@@ -35,7 +37,15 @@ export async function GET(){
 		const history=stories.length?await db.auditLog.findMany({where:{entity:'CLIENT_STORY',entityId:{in:stories.map(story=>story.id)}},include:{actor:{select:{name:true,email:true}}},orderBy:{createdAt:'desc'},take:500}):[];
 		const byStory=new Map<string,typeof history>();
 		for(const event of history){if(!event.entityId)continue;byStory.set(event.entityId,[...(byStory.get(event.entityId)||[]),event]);}
-		return NextResponse.json(jsonSafe({stories:stories.map(story=>({...story,auditHistory:byStory.get(story.id)||[]})),users}));
+		const storiesWithImages=await Promise.all(stories.map(async story=>{
+			let imageUrl=resolveClientStoryImage(story.imageReference);
+			if(story.imageReference?.startsWith('storage://client-stories/')){
+				const key=story.imageReference.slice('storage://client-stories/'.length);
+				imageUrl=await createPrivateSignedUrl('clientStory',story.id,key).catch(()=>null);
+			}
+			return {...story,imageUrl,auditHistory:byStory.get(story.id)||[]};
+		}));
+		return NextResponse.json(jsonSafe({stories:storiesWithImages,users}),{headers:{'Cache-Control':'private, no-store'}});
 	}catch{return NextResponse.json({error:'Forbidden'},{status:403})}
 }
 

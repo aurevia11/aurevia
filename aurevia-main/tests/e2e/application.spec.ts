@@ -779,9 +779,9 @@ test('Account Funding loads its wallet independently and clearly blocks unconfig
 	await selectAccountMode(page,'REAL');
 	await page.goto('/wallet');
 	const methods=await page.request.get('/api/payment-methods').then(response=>response.json());
-	expect(methods).toMatchObject({methods:[],fundingStatus:'NOT_CONFIGURED',realFundingAvailable:false});
-	await expect(page.getByRole('status').filter({hasText:'No self-service REAL deposit method is configured'}).first()).toBeVisible();
-	await expect(page.getByLabel('Payment method')).toHaveValue('');
+	expect(methods).toMatchObject({methods:[],fundingStatus:'NOT_CONFIGURED',realFundingAvailable:false,manualDepositReviewAvailable:true});
+	await expect(page.getByText(/No deposit method is configured\. Submit a request for administrator review/)).toBeVisible();
+	await expect(page.getByLabel('Amount (USD)')).toBeVisible();
 	await expect(page.getByRole('button',{name:/Review deposit request/i})).toBeDisabled();
 	await expect(page.getByRole('alert').filter({hasText:'Wallet data is temporarily unavailable'})).toHaveCount(0);
 	for(const width of [320,375,390,430,1440]){
@@ -958,15 +958,22 @@ test('investment requests remain mode-isolated through admin review without fake
 		await selectAccountMode(page,'REAL');
 			await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(125);
 			const unavailableMethods=await page.request.get('/api/payment-methods').then(response=>response.json());
-			expect(unavailableMethods).toMatchObject({methods:[],fundingStatus:'NOT_CONFIGURED',realFundingAvailable:false});
+				expect(unavailableMethods).toMatchObject({methods:[],fundingStatus:'NOT_CONFIGURED',realFundingAvailable:false,manualDepositReviewAvailable:true});
 			const existingFunding=await page.request.get('/api/wallet').then(response=>response.json());
 			const blockedFunding=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'DEPOSIT',paymentMethodId:'not-configured',amount:10,currency:'USD',transactionReference:`E2E-${randomUUID()}`}});
 			expect(blockedFunding.status()).toBe(400);
 			expect((await blockedFunding.json()).error).toBe('payment method unavailable');
 			expect(await page.request.get('/api/wallet').then(async response=>(await response.json()).transactions.length)).toBe(existingFunding.transactions.length);
+			const manualRequestResponse=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'DEPOSIT',amount:10,currency:'USD',transactionReference:`MANUAL-${randomUUID()}`}});
+			expect(manualRequestResponse.status()).toBe(201);
+			const manualRequest=await manualRequestResponse.json();
+			expect(manualRequest).toMatchObject({method:'Manual admin review',paymentMethodId:null,status:'PENDING_REVIEW',accountMode:'REAL'});
+			const approvalWithoutReceipt=await adminPage.request.patch('/api/admin/funding',{data:{id:manualRequest.id,decision:'APPROVED'}});
+			expect(approvalWithoutReceipt.status()).toBe(409);
 			await page.goto('/wallet');
-			await expect(page.getByRole('status').filter({hasText:'No self-service REAL deposit method is configured'}).first()).toBeVisible();
-			await expect(page.getByLabel('Payment method')).toHaveValue('');
+			await expect(page.getByText(/No deposit method is configured\. Submit a request for administrator review/)).toBeVisible();
+			await expect(page.getByLabel('Amount (USD)')).toBeVisible();
+			await expect(page.getByText('Manual admin review')).toBeVisible();
 		await page.goto('/investments');
 		await expect(page.getByText(/administrator review of an identity profile, not external KYC\/AML clearance/i)).toBeVisible();
 		const realRequestResponse=await page.request.post('/api/investments',{headers:{'Idempotency-Key':randomUUID()},data:{opportunityId:opportunity.id,amount:500}});

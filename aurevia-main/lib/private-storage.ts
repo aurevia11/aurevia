@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {getServerConfiguration} from './config/env';
 
-export type PrivateStorageArea='kyc'|'avatar'|'receipt'|'support';
+export type PrivateStorageArea='kyc'|'avatar'|'receipt'|'support'|'clientStory';
 
 type StorageConfiguration={baseUrl:string;serviceKey:string};
 type AreaConfiguration={bucket:string;maxBytes:number;mimeTypes:readonly string[];legacyPrefix:string};
@@ -11,6 +11,7 @@ const areas:Record<PrivateStorageArea,AreaConfiguration>={
 	avatar:{bucket:'profile-avatars',maxBytes:5*1024*1024,mimeTypes:['image/jpeg','image/png','image/webp'],legacyPrefix:'avatars'},
 	receipt:{bucket:'wallet-receipts',maxBytes:10*1024*1024,mimeTypes:['application/pdf','image/jpeg','image/png','image/webp'],legacyPrefix:'receipts'},
 	support:{bucket:'support-attachments',maxBytes:10*1024*1024,mimeTypes:['application/pdf','image/jpeg','image/png','image/webp'],legacyPrefix:'support'},
+	clientStory:{bucket:'client-stories',maxBytes:5*1024*1024,mimeTypes:['image/jpeg','image/png','image/webp'],legacyPrefix:'client-stories'},
 };
 
 const extensionByMime:Record<string,string>={

@@ -11,7 +11,7 @@ import {useLocale} from '@/lib/i18n-context';
 type PaymentMethod={id:string;name:string;currencies:string[];destination:string|null;instructions:string|null;minimumAmount:string|number;maximumAmount:string|number|null;depositEnabled:boolean;withdrawalEnabled:boolean;requiresNetwork:boolean;demoOnly:boolean};
 type FundingRecord={id:string;type:'DEPOSIT'|'WITHDRAWAL';method:string;amount:number|string;creditedAmount?:number|string|null;currency:string;status:string;accountMode:'DEMO'|'REAL';createdAt:string;reviewedAt?:string|null;reviewedBy?:{name:string|null;email:string}|null;transactionReference?:string|null;adminNote?:string|null;hasReceipt?:boolean;user?:{name:string|null;email:string}};
 type WalletData={accountMode:'DEMO'|'REAL';balance:number|string|null;balances:Array<{currency:string;balance:number|string}>;transactions:FundingRecord[]};
-type PaymentMethodsResponse={methods:PaymentMethod[];fundingStatus:'DEMO'|'AVAILABLE'|'MANUAL_REVIEW'|'NOT_CONFIGURED'|'DISABLED'|'ERROR';realFundingAvailable:boolean;realWithdrawalAvailable:boolean};
+type PaymentMethodsResponse={methods:PaymentMethod[];fundingStatus:'DEMO'|'AVAILABLE'|'MANUAL_REVIEW'|'NOT_CONFIGURED'|'DISABLED'|'ERROR';realFundingAvailable:boolean;realWithdrawalAvailable:boolean;manualDepositReviewAvailable:boolean};
 type KycData={kycStatus:string;documents:number;verificationProfileSubmitted:boolean;depositEnabled:boolean;withdrawalEnabled:boolean;accountRestricted:boolean;restrictionReason:string|null;canWithdraw?:boolean};
 
 const money=(amount:number,currency='USD')=>`${amount.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:8})} ${currency}`;
@@ -35,7 +35,7 @@ function isWalletData(value:unknown):value is WalletData{
 function isPaymentMethodsResponse(value:unknown):value is PaymentMethodsResponse{
 	if(!value||typeof value!=='object')return false;
 	const data=value as Partial<PaymentMethodsResponse>;
-	return Array.isArray(data.methods)&&data.methods.every(method=>!!method&&typeof method.id==='string'&&typeof method.name==='string'&&Array.isArray(method.currencies)&&method.currencies.every(currency=>typeof currency==='string')&&typeof method.depositEnabled==='boolean'&&typeof method.withdrawalEnabled==='boolean')&&['DEMO','AVAILABLE','MANUAL_REVIEW','NOT_CONFIGURED','DISABLED','ERROR'].includes(String(data.fundingStatus))&&typeof data.realFundingAvailable==='boolean'&&typeof data.realWithdrawalAvailable==='boolean';
+	return Array.isArray(data.methods)&&data.methods.every(method=>!!method&&typeof method.id==='string'&&typeof method.name==='string'&&Array.isArray(method.currencies)&&method.currencies.every(currency=>typeof currency==='string')&&typeof method.depositEnabled==='boolean'&&typeof method.withdrawalEnabled==='boolean')&&['DEMO','AVAILABLE','MANUAL_REVIEW','NOT_CONFIGURED','DISABLED','ERROR'].includes(String(data.fundingStatus))&&typeof data.realFundingAvailable==='boolean'&&typeof data.realWithdrawalAvailable==='boolean'&&typeof data.manualDepositReviewAvailable==='boolean';
 }
 
 export default function WalletExperience(){
@@ -47,6 +47,7 @@ export default function WalletExperience(){
 	const [fundingStatus,setFundingStatus]=useState<PaymentMethodsResponse['fundingStatus']>('NOT_CONFIGURED');
 	const [realFundingAvailable,setRealFundingAvailable]=useState(false);
 	const [realWithdrawalAvailable,setRealWithdrawalAvailable]=useState(false);
+	const [manualDepositReviewAvailable,setManualDepositReviewAvailable]=useState(false);
 	const [profile,setProfile]=useState<KycData|null>(null);
 	const [methodLoadError,setMethodLoadError]=useState('');
 	const [profileLoadError,setProfileLoadError]=useState('');
@@ -78,6 +79,7 @@ export default function WalletExperience(){
 
 	const availableMethods=useMemo(()=>methods.filter(method=>type==='DEPOSIT'?method.depositEnabled:method.withdrawalEnabled&&(data.accountMode==='DEMO'||realWithdrawalAvailable)),[methods,type,data.accountMode,realWithdrawalAvailable]);
 	const selectedMethod=availableMethods.find(method=>method.id===methodId);
+	const manualRealDeposit=type==='DEPOSIT'&&data.accountMode==='REAL'&&manualDepositReviewAvailable&&availableMethods.length===0;
 	const supportedCurrencies=useMemo(()=>selectedMethod?.currencies||[],[selectedMethod]);
 	const currentBalanceRecord=data.balances.find(item=>item.currency===currency);
 	const currentBalance=currentBalanceRecord?Number(currentBalanceRecord.balance):null;
@@ -108,10 +110,11 @@ export default function WalletExperience(){
 			setFundingStatus(methodsRequest.value.result.fundingStatus);
 			setRealFundingAvailable(methodsRequest.value.result.realFundingAvailable);
 			setRealWithdrawalAvailable(methodsRequest.value.result.realWithdrawalAvailable);
+			setManualDepositReviewAvailable(methodsRequest.value.result.manualDepositReviewAvailable);
 			setMethodLoadError('');
 		}else{
 			const result=methodsRequest.status==='fulfilled'?methodsRequest.value.result as {error?:string}:null;
-			setMethods([]);setFundingStatus('ERROR');setRealFundingAvailable(false);setRealWithdrawalAvailable(false);
+			setMethods([]);setFundingStatus('ERROR');setRealFundingAvailable(false);setRealWithdrawalAvailable(false);setManualDepositReviewAvailable(false);
 			setMethodLoadError(result?.error||'Funding options are temporarily unavailable. No funds were changed.');
 		}
 		if(profileRequest.status==='fulfilled'&&profileRequest.value.response.ok&&profileRequest.value.result&&typeof profileRequest.value.result==='object'){
@@ -125,28 +128,32 @@ export default function WalletExperience(){
 	useEffect(()=>{
 		if(sessionStatus!=='authenticated')return;
 		setData({accountMode:activeMode||'DEMO',balance:0,balances:[],transactions:[]});
-		setMethods([]);setMethodId('');setFundingStatus('NOT_CONFIGURED');setRealFundingAvailable(false);setRealWithdrawalAvailable(false);setProfile(null);setMethodLoadError('');setProfileLoadError('');setHasWalletData(false);
+		setMethods([]);setMethodId('');setFundingStatus('NOT_CONFIGURED');setRealFundingAvailable(false);setRealWithdrawalAvailable(false);setManualDepositReviewAvailable(false);setProfile(null);setMethodLoadError('');setProfileLoadError('');setHasWalletData(false);
 		void load(true);
 	},[sessionStatus,activeMode,load]);
 	useEffect(()=>{
 		if(sessionStatus!=='authenticated')return;
 		const timer=window.setInterval(()=>void load(),15000);
-		return ()=>window.clearInterval(timer);
+		const refreshWhenActive=()=>{if(document.visibilityState==='visible')void load()};
+		window.addEventListener('focus',refreshWhenActive);
+		document.addEventListener('visibilitychange',refreshWhenActive);
+		return ()=>{window.clearInterval(timer);window.removeEventListener('focus',refreshWhenActive);document.removeEventListener('visibilitychange',refreshWhenActive)};
 	},[sessionStatus,load]);
 	useEffect(()=>{
 		if(!availableMethods.some(method=>method.id===methodId))setMethodId(availableMethods[0]?.id||'');
 	},[availableMethods,methodId]);
 	useEffect(()=>{if(supportedCurrencies.length&&!supportedCurrencies.includes(currency))setCurrency(supportedCurrencies[0])},[supportedCurrencies,currency]);
+	useEffect(()=>{if(manualRealDeposit&&currency!=='USD')setCurrency('USD')},[manualRealDeposit,currency]);
 	useEffect(()=>()=>{if(copiedTimer.current!==null)window.clearTimeout(copiedTimer.current)},[]);
 
 	async function submit(event:FormEvent<HTMLFormElement>){
-		event.preventDefault();	setConfirming(true);setMessage('');setError('');
+		event.preventDefault();if(!selectedMethod&&!manualRealDeposit)return;setConfirming(true);setMessage('');setError('');
 	}
 
 	async function confirmSubmit(){
-		if(!selectedMethod||submitting)return;
+		if((!selectedMethod&&!manualRealDeposit)||submitting)return;
 		setSubmitting(true);setError('');
-		const payload={type,paymentMethodId:selectedMethod.id,amount:Number(amount),currency,transactionReference:transactionReference||undefined,referenceInfo:referenceInfo||undefined,senderInfo:senderInfo||undefined,destinationInfo:destinationInfo||undefined,beneficiaryInfo:beneficiaryInfo||undefined,network:network||undefined,note:note||undefined};
+		const payload={type,...(selectedMethod?{paymentMethodId:selectedMethod.id}:{}),amount:Number(amount),currency,transactionReference:transactionReference||undefined,referenceInfo:referenceInfo||undefined,senderInfo:senderInfo||undefined,destinationInfo:destinationInfo||undefined,beneficiaryInfo:beneficiaryInfo||undefined,network:network||undefined,note:note||undefined};
 		const fingerprint=JSON.stringify(payload);
 		const key=idempotencyKey&&keyFingerprint===fingerprint?idempotencyKey:window.crypto.randomUUID();setIdempotencyKey(key);setKeyFingerprint(fingerprint);
 		try{
@@ -194,7 +201,7 @@ export default function WalletExperience(){
 		{type==='DEPOSIT'&&profile?.depositEnabled===false&&<div className="account-callout account-mode-notice" role="status"><span>Deposits are disabled for your account. Contact an administrator for assistance.</span></div>}
 		{type==='WITHDRAWAL'&&profile&&!profile.withdrawalEnabled&&!realWithdrawalBlocked&&<div className="account-callout account-mode-notice" role="status"><span>Withdrawals are disabled for your account by an administrator.</span></div>}
 		{type==='WITHDRAWAL'&&profile?.canWithdraw===false&&!realWithdrawalBlocked&&profile.withdrawalEnabled&&<div className="account-callout account-mode-notice" role="status"><span>Withdrawals are available only after the first completed investment trade.</span></div>}
-		{data.accountMode==='REAL'&&!realFundingAvailable&&<div className="account-callout account-mode-notice" role="status"><span>{fundingUnavailableMessage(fundingStatus)}</span></div>}
+		{data.accountMode==='REAL'&&((type==='DEPOSIT'&&!realFundingAvailable&&!manualDepositReviewAvailable)||(type==='WITHDRAWAL'&&!realWithdrawalAvailable))&&<div className="account-callout account-mode-notice" role="status"><span>{fundingUnavailableMessage(fundingStatus)}</span></div>}
 		{data.accountMode==='REAL'&&profileLoadError&&<div className="account-callout account-mode-notice" role="status"><span>{profileLoadError} REAL funding requests remain disabled until this status can be verified.</span></div>}
 		<section className="wallet-balance-panel"><div className="wallet-balance-heading"><div className="account-kicker">{translate('availableBalances',{mode:data.accountMode.toLowerCase()})}</div><button type="button" className="wallet-balance-toggle" aria-label={balanceVisible?'Hide balances':'Show balances'} aria-pressed={!balanceVisible} onClick={()=>setBalanceVisible(value=>!value)}>{balanceVisible?<EyeOff size={16}/>:<Eye size={16}/>}<span>{balanceVisible?'Hide':'Show'}</span></button></div><div className="wallet-balance-value">{loading?translate('loading'):!hasWalletData||data.balance===null?'Unavailable':balanceVisible?money(Number(data.balance)): '••••••'}</div><p className="wallet-demo-note">{hasWalletData?translate('walletDemoNote'):'Balance could not be retrieved. No balance is assumed.'}</p><div className="wallet-currency-list">{data.balances.map(item=><span key={item.currency}>{balanceVisible?money(Number(item.balance),item.currency):`${item.currency} ••••••`}</span>)}</div></section>
 		{error&&<p className="mt-3 text-sm text-loss" role="alert">{error}</p>}
@@ -212,27 +219,28 @@ export default function WalletExperience(){
 			<section className="account-panel card p-5"><div className="account-panel-title"><div><h2>{translate('fundingRequest')}</h2><p className="account-panel-subtitle">{translate('fundingRequestSubtitle')}</p></div><WalletCards size={18} className="gold" aria-hidden="true"/></div>
 				<div className="wallet-type-switch" role="group" aria-label={translate('fundingRequestType')}><button type="button" aria-pressed={type==='DEPOSIT'} onClick={()=>{setType('DEPOSIT');setConfirming(false)}}><ArrowDownLeft size={15}/> {translate('deposit')}</button><button type="button" aria-pressed={type==='WITHDRAWAL'} onClick={()=>{setType('WITHDRAWAL');setConfirming(false)}}><ArrowUpRight size={15}/> {translate('withdrawal')}</button></div>
 				<form onSubmit={submit} className="mt-4 space-y-4">
-					<label className="account-label">{translate('paymentMethod')}<select className="input" required value={methodId} onChange={event=>setMethodId(event.target.value)}><option value="">{translate('selectEnabledMethod')}</option>{availableMethods.map(method=><option key={method.id} value={method.id}>{method.name}</option>)}</select></label>
-					{selectedMethod&&<>
-						<label className="account-label">{translate('currency')}<select className="input" required value={currency} onChange={event=>setCurrency(event.target.value)}>{supportedCurrencies.map(item=><option key={item} value={item}>{item}</option>)}</select></label>
-						<label className="account-label">{translate('amount',{currency})}<input className="input" type="number" min={type==='DEPOSIT'?'0.00000001':selectedMethod.minimumAmount||'0.00000001'} max={type==='DEPOSIT'?undefined:selectedMethod.maximumAmount||undefined} step="any" inputMode="decimal" required value={amount} onChange={event=>setAmount(event.target.value)} placeholder="0.00"/></label>
+					{!manualRealDeposit&&<label className="account-label">{translate('paymentMethod')}<select className="input" required value={methodId} onChange={event=>setMethodId(event.target.value)}><option value="">{translate('selectEnabledMethod')}</option>{availableMethods.map(method=><option key={method.id} value={method.id}>{method.name}</option>)}</select></label>}
+					{manualRealDeposit&&<div className="account-callout" role="status"><span>No deposit method is configured. Submit a request for administrator review and upload payment evidence afterward. Do not send money without separately verified payment instructions; this app does not process payments.</span></div>}
+					{(selectedMethod||manualRealDeposit)&&<>
+						{manualRealDeposit?<label className="account-label">{translate('currency')}<input className="input" value="USD" readOnly/></label>:<label className="account-label">{translate('currency')}<select className="input" required value={currency} onChange={event=>setCurrency(event.target.value)}>{supportedCurrencies.map(item=><option key={item} value={item}>{item}</option>)}</select></label>}
+						<label className="account-label">{translate('amount',{currency})}<input className="input" type="number" min={type==='DEPOSIT'?'0.00000001':selectedMethod?.minimumAmount||'0.00000001'} max={type==='DEPOSIT'?undefined:selectedMethod?.maximumAmount||undefined} step="any" inputMode="decimal" required value={amount} onChange={event=>setAmount(event.target.value)} placeholder="0.00"/></label>
 						{type==='DEPOSIT'?<>
-							{(selectedMethod.destination||selectedMethod.instructions)&&<div className="account-callout deposit-instructions"><div><strong>{translate('administratorConfiguredPaymentInstructions')}</strong>{selectedMethod.destination&&<p className="mt-2 break-all font-mono text-xs">{selectedMethod.destination}</p>}{selectedMethod.instructions&&<p className="mt-2 text-sm">{selectedMethod.instructions}</p>}</div>{selectedMethod.destination&&<button type="button" className="icon-action" aria-label={translate('copyPaymentDestination')} onClick={()=>void copyDestination()}>{copied?<Check size={15}/>:<Copy size={15}/>}</button>}</div>}
+							{(selectedMethod?.destination||selectedMethod?.instructions)&&<div className="account-callout deposit-instructions"><div><strong>{translate('administratorConfiguredPaymentInstructions')}</strong>{selectedMethod.destination&&<p className="mt-2 break-all font-mono text-xs">{selectedMethod.destination}</p>}{selectedMethod.instructions&&<p className="mt-2 text-sm">{selectedMethod.instructions}</p>}</div>{selectedMethod.destination&&<button type="button" className="icon-action" aria-label={translate('copyPaymentDestination')} onClick={()=>void copyDestination()}>{copied?<Check size={15}/>:<Copy size={15}/>}</button>}</div>}
 							<label className="account-label">{data.accountMode==='REAL'?'Internal reference (optional)':translate('externalReference')}<input className="input" maxLength={180} value={transactionReference} onChange={event=>setTransactionReference(event.target.value)} placeholder={data.accountMode==='REAL'?'Optional note/reference for admin review':translate('paymentProviderReference')}/></label>
 							<label className="account-label">{translate('senderReference')}<input className="input" maxLength={500} value={referenceInfo} onChange={event=>setReferenceInfo(event.target.value)} placeholder={translate('providerReference')}/></label>
 							<label className="account-label">{translate('senderInformation')}<input className="input" maxLength={300} value={senderInfo} onChange={event=>setSenderInfo(event.target.value)} placeholder={translate('nameOrAccountDetails')}/></label>
 							<div className="account-callout"><span>{data.accountMode==='REAL'?'Submit the request, then upload your payment screenshot from Transaction History. An administrator must review the proof before approving and crediting the configured internal ledger. No payment is processed by this app.':translate('paymentProofUnavailable')}</span></div>
 						</>:<>
-							{selectedMethod.demoOnly?<div className="account-callout"><span>{translate('demoWithdrawalNotice')}</span></div>:<label className="account-label">{translate('destinationAddress')}<input className="input" required maxLength={500} value={destinationInfo} onChange={event=>setDestinationInfo(event.target.value)} placeholder={translate('payoutDestinationPlaceholder')}/></label>}
-							{selectedMethod.requiresNetwork&&!selectedMethod.demoOnly&&<label className="account-label">{translate('network')}<input className="input" required maxLength={80} value={network} onChange={event=>setNetwork(event.target.value)} placeholder={translate('destinationNetworkPlaceholder')}/></label>}
+							{selectedMethod!.demoOnly?<div className="account-callout"><span>{translate('demoWithdrawalNotice')}</span></div>:<label className="account-label">{translate('destinationAddress')}<input className="input" required maxLength={500} value={destinationInfo} onChange={event=>setDestinationInfo(event.target.value)} placeholder={translate('payoutDestinationPlaceholder')}/></label>}
+							{selectedMethod!.requiresNetwork&&!selectedMethod!.demoOnly&&<label className="account-label">{translate('network')}<input className="input" required maxLength={80} value={network} onChange={event=>setNetwork(event.target.value)} placeholder={translate('destinationNetworkPlaceholder')}/></label>}
 							<label className="account-label">{translate('beneficiaryInformation')}<input className="input" maxLength={300} value={beneficiaryInfo} onChange={event=>setBeneficiaryInfo(event.target.value)} placeholder={translate('beneficiaryPlaceholder')}/></label>
 							<div className="account-callout"><span>{translate('availableBalanceMessage',{currency})}: {availableBalance===null?'Unavailable':money(availableBalance,currency)}. {translate('fundsReservedMessage')}</span></div>
 						</>}
 						<label className="account-label">{translate('note')}<textarea className="input min-h-20" maxLength={500} value={note} onChange={event=>setNote(event.target.value)}/></label>
 					</>}
-					{!availableMethods.length&&<div className="account-empty" role="status">{methodLoadError||translate('noDepositMethods',{type:type.toLowerCase()})}</div>}
-					{confirming&&selectedMethod&&<div className="account-confirm-panel" role="alert"><h3>{translate('confirmRequest',{type:type.toLowerCase()})}</h3><p>{money(Number(amount||0),currency)} via {selectedMethod.name} in the {data.accountMode} account. This records a request only; it does not send or confirm payment.</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" className="btn bg-gold text-black" disabled={submitting} onClick={()=>void confirmSubmit()}>{submitting?translate('submitRequestStatus'):translate('confirmRequestButton')}</button><button type="button" className="btn bg-white/5" onClick={()=>setConfirming(false)}>{translate('cancelRequestButton')}</button></div></div>}
-					{!confirming&&<button className="btn w-full bg-gold text-black" type="submit" disabled={loading||!hasWalletData||!selectedMethod||(type==='DEPOSIT'&&(!profile?.depositEnabled||!!profileLoadError))||(data.accountMode==='REAL'&&(!realKycApproved||!!profileLoadError||(type==='DEPOSIT'?!realFundingAvailable:!realWithdrawalAvailable)))||(type==='WITHDRAWAL'&&(realWithdrawalBlocked||!profile?.withdrawalEnabled||profile.accountRestricted||availableBalance===null||!profile.canWithdraw))}>{type==='DEPOSIT'?translate('reviewDepositRequest'):translate('reviewWithdrawalRequest')}</button>}
+					{!availableMethods.length&&!manualRealDeposit&&<div className="account-empty" role="status">{methodLoadError||translate('noDepositMethods',{type:type.toLowerCase()})}</div>}
+					{confirming&&(selectedMethod||manualRealDeposit)&&<div className="account-confirm-panel" role="alert"><h3>{translate('confirmRequest',{type:type.toLowerCase()})}</h3><p>{money(Number(amount||0),currency)} via {selectedMethod?.name||'Manual administrator review'} in the {data.accountMode} account. This records a request only; it does not send or confirm payment.</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" className="btn bg-gold text-black" disabled={submitting} onClick={()=>void confirmSubmit()}>{submitting?translate('submitRequestStatus'):translate('confirmRequestButton')}</button><button type="button" className="btn bg-white/5" onClick={()=>setConfirming(false)}>{translate('cancelRequestButton')}</button></div></div>}
+					{!confirming&&<button className="btn w-full bg-gold text-black" type="submit" disabled={loading||!hasWalletData||(!selectedMethod&&!manualRealDeposit)||(type==='DEPOSIT'&&(!profile?.depositEnabled||!!profileLoadError))||(data.accountMode==='REAL'&&(!realKycApproved||!!profileLoadError||(type==='DEPOSIT'?(!realFundingAvailable&&!manualDepositReviewAvailable):!realWithdrawalAvailable)))||(type==='WITHDRAWAL'&&(realWithdrawalBlocked||!profile?.withdrawalEnabled||profile.accountRestricted||availableBalance===null||!profile.canWithdraw))}>{type==='DEPOSIT'?translate('reviewDepositRequest'):translate('reviewWithdrawalRequest')}</button>}
 				</form>
 			</section>
 			<section className="account-panel card p-5"><div className="account-panel-title"><div><h2>{translate('transactionHistory')}</h2><p className="account-panel-subtitle">{translate('transactionHistorySubtitle')}</p></div><div className="flex items-center gap-2"><Link className="text-link" href="/wallet/transactions">{translate('fullHistory')}</Link><button type="button" className="icon-action" aria-label={translate('refreshWalletHistory')} onClick={()=>void load(true)}><RefreshCw size={15}/></button></div></div>

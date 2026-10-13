@@ -8,7 +8,7 @@ import {resolveClientStoryImage} from '@/lib/client-story-media';
 type StoryStatus='DRAFT'|'PENDING_VERIFICATION'|'VERIFIED'|'PUBLISHED'|'REJECTED'|'ARCHIVED';
 type AdminUser={id:string;email:string;name:string|null};
 type AuditItem={id:string;action:string;createdAt:string;actor:{name:string|null;email:string}|null;metadata:Record<string,unknown>|null};
-type Story={id:string;displayName:string;country:string;cityOrRegion:string|null;quote:string;imageReference:string|null;userId:string|null;verifiedClient:boolean;verifiedWithdrawalId:string|null;withdrawalAmount:string|null;currency:string|null;transactionVerified:boolean;consentConfirmed:boolean;showWithdrawalAmount:boolean;displayCurrency:string|null;publicationStatus:StoryStatus;source:string|null;adminNote:string|null;user:{id:string;email:string;name:string|null;kycStatus:string}|null;withdrawal:{id:string;status:string;accountMode:string;type:string;amount:string;currency:string;userId:string}|null;auditHistory:AuditItem[]};
+type Story={id:string;displayName:string;country:string;cityOrRegion:string|null;quote:string;imageReference:string|null;imageUrl?:string|null;userId:string|null;verifiedClient:boolean;verifiedWithdrawalId:string|null;withdrawalAmount:string|null;currency:string|null;transactionVerified:boolean;consentConfirmed:boolean;showWithdrawalAmount:boolean;displayCurrency:string|null;publicationStatus:StoryStatus;source:string|null;adminNote:string|null;user:{id:string;email:string;name:string|null;kycStatus:string}|null;withdrawal:{id:string;status:string;accountMode:string;type:string;amount:string;currency:string;userId:string}|null;auditHistory:AuditItem[]};
 
 export default function ClientStoriesPanel(){
 	const [stories,setStories]=useState<Story[]>([]);
@@ -41,14 +41,23 @@ export default function ClientStoriesPanel(){
 		}catch(exception){setError(exception instanceof Error?exception.message:'Unable to update this story.');}
 	}
 
+	async function uploadImage(story:Story,file:File){
+		const body=new FormData();body.append('storyId',story.id);body.append('file',file);
+		const response=await fetch('/api/admin/client-stories/image',{method:'POST',body});
+		const result=await response.json();
+		if(!response.ok)throw new Error(result.error||'Unable to upload this story photo.');
+		await load();
+		return result as {imageReference:string;imageUrl:string};
+	}
+
 	return <section id="client-stories" className="card p-4 sm:p-5">
 		<header className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-bold">Client stories</h2><p className="muted mt-1 text-sm">Private drafts stay unpublished until identity, transaction, and consent checks pass.</p></div><button className="btn min-h-11 bg-white/5" type="button" onClick={()=>void load()} disabled={loading}>{loading?<LoaderCircle size={16} className="animate-spin"/>:'Refresh'}</button></header>
 		{error&&<p role="alert" className="mt-3 text-sm text-loss">{error}</p>}{message&&<p role="status" className="mt-3 text-sm text-profit">{message}</p>}
-		{loading&&!stories.length?<p className="mt-4 muted">Loading story drafts…</p>:stories.length?<div className="mt-4 space-y-4">{stories.map(story=><ClientStoryEditor key={story.id} story={story} users={users} onUpdate={update}/>)}</div>:<p className="mt-4 muted">No client stories are available.</p>}
+		{loading&&!stories.length?<p className="mt-4 muted">Loading story drafts…</p>:stories.length?<div className="mt-4 space-y-4">{stories.map(story=><ClientStoryEditor key={story.id} story={story} users={users} onUpdate={update} onUpload={uploadImage}/>)}</div>:<p className="mt-4 muted">No client stories are available.</p>}
 	</section>;
 }
 
-function ClientStoryEditor({story,users,onUpdate}:{story:Story;users:AdminUser[];onUpdate:(story:Story,payload:Record<string,unknown>)=>Promise<void>}){
+function ClientStoryEditor({story,users,onUpdate,onUpload}:{story:Story;users:AdminUser[];onUpdate:(story:Story,payload:Record<string,unknown>)=>Promise<void>;onUpload:(story:Story,file:File)=>Promise<{imageReference:string;imageUrl:string}>}){
 	const [displayName,setDisplayName]=useState(story.displayName);
 	const [country,setCountry]=useState(story.country);
 	const [cityOrRegion,setCityOrRegion]=useState(story.cityOrRegion||'');
@@ -61,16 +70,28 @@ function ClientStoryEditor({story,users,onUpdate}:{story:Story;users:AdminUser[]
 	const [showWithdrawalAmount,setShowWithdrawalAmount]=useState(story.showWithdrawalAmount);
 	const [displayCurrency,setDisplayCurrency]=useState(story.displayCurrency||story.currency||'USD');
 	const [adminNote,setAdminNote]=useState(story.adminNote||'');
-	const image=resolveClientStoryImage(imageReference||null);
+	const [imageUrl,setImageUrl]=useState(story.imageUrl||'');
+	const [imageFile,setImageFile]=useState<File|null>(null);
+	const [imageBusy,setImageBusy]=useState(false);
+	const [imageError,setImageError]=useState('');
+	const image=imageUrl||resolveClientStoryImage(imageReference||null);
 	const verifiedWithdrawal=story.withdrawal?.id===withdrawalId&&story.withdrawal.status==='COMPLETED'&&story.withdrawal.type==='WITHDRAWAL'&&story.withdrawal.accountMode==='REAL'&&story.withdrawal.userId===userId;
 	const canPublish=verifyIdentity&&Boolean(userId)&&verifiedWithdrawal&&consentConfirmed;
 	const payload=()=>({displayName,country,cityOrRegion:cityOrRegion||null,quote,imageReference:imageReference||null,userId:userId||null,verifyIdentity,withdrawalId:withdrawalId||null,consentConfirmed,showWithdrawalAmount,displayCurrency:showWithdrawalAmount?displayCurrency:null,adminNote:adminNote||null});
+	async function uploadSelectedImage(){
+		if(!imageFile||imageBusy)return;
+		setImageBusy(true);setImageError('');
+		try{const uploaded=await onUpload(story,imageFile);setImageReference(uploaded.imageReference);setImageUrl(uploaded.imageUrl);setImageFile(null)}
+		catch(exception){setImageError(exception instanceof Error?exception.message:'Unable to upload this story photo.')}
+		finally{setImageBusy(false)}
+	}
 
 	return <article className="rounded-lg border border-white/10 p-3 sm:p-4">
 		<div className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="font-semibold">{story.displayName}</h3><p className="muted text-xs">{story.id} · {story.publicationStatus.replaceAll('_',' ')}</p></div><span className="status-pill">{story.publicationStatus.replaceAll('_',' ')}</span></div>
+		{imageError&&<p role="alert" className="mt-2 text-sm text-loss">{imageError}</p>}
 		<div className="mt-3 grid gap-3 sm:grid-cols-[120px_minmax(0,1fr)]">
 			<div className="min-h-24 overflow-hidden rounded-md border border-white/10 bg-white/[0.03]">{image?<Image src={image} alt={`Draft story photo for ${story.displayName}`} width={240} height={240} className="h-32 w-full object-cover"/>:<div className="flex h-24 items-center justify-center gap-2 px-2 text-center text-xs muted"><ImageOff size={16}/><span>{story.imageReference?.startsWith('storage://')?'Storage image pending provider setup':'No supplied photo available'}</span></div>}</div>
-			<div className="grid gap-2 sm:grid-cols-2"><label className="text-xs muted">Display name<input className="input mt-1 min-h-11" value={displayName} maxLength={120} onChange={event=>setDisplayName(event.target.value)}/></label><label className="text-xs muted">Country<input className="input mt-1 min-h-11" value={country} maxLength={80} onChange={event=>setCountry(event.target.value)}/></label><label className="text-xs muted">City or region<input className="input mt-1 min-h-11" value={cityOrRegion} maxLength={120} onChange={event=>setCityOrRegion(event.target.value)}/></label><label className="text-xs muted">Image storage reference<input className="input mt-1 min-h-11" value={imageReference} placeholder="/client-stories/..." onChange={event=>setImageReference(event.target.value)}/></label></div>
+			<div className="grid gap-2 sm:grid-cols-2"><label className="text-xs muted">Display name<input className="input mt-1 min-h-11" value={displayName} maxLength={120} onChange={event=>setDisplayName(event.target.value)}/></label><label className="text-xs muted">Country<input className="input mt-1 min-h-11" value={country} maxLength={80} onChange={event=>setCountry(event.target.value)}/></label><label className="text-xs muted">City or region<input className="input mt-1 min-h-11" value={cityOrRegion} maxLength={120} onChange={event=>setCityOrRegion(event.target.value)}/></label><div className="grid gap-2"><label className="text-xs muted">Story photo<input className="input mt-1 min-h-11" type="file" accept="image/jpeg,image/png,image/webp" onChange={event=>setImageFile(event.target.files?.[0]||null)}/></label><button className="btn min-h-11 justify-self-start bg-white/10" type="button" disabled={!imageFile||imageBusy} onClick={()=>void uploadSelectedImage()}>{imageBusy?'Uploading photo…':'Upload photo'}</button></div></div>
 		</div>
 		<label className="mt-3 block text-xs muted">Quote<textarea className="input mt-1 min-h-28 resize-y" value={quote} maxLength={3000} onChange={event=>setQuote(event.target.value)}/></label>
 		<div className="mt-3 grid gap-3 sm:grid-cols-2">

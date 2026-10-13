@@ -13,7 +13,7 @@ import {getFundingProviderReadiness} from '@/lib/providers/funding-provider';
 
 const schema=z.object({
 	type:z.nativeEnum(FundingType),
-	paymentMethodId:z.string().min(1),
+	paymentMethodId:z.string().min(1).optional(),
 	amount:z.number().positive().max(100000000),
 	currency:z.string().trim().regex(/^[A-Za-z]{3,10}$/),
 	transactionReference:z.string().trim().max(180).optional(),
@@ -70,7 +70,7 @@ export async function POST(req:Request){
 		const result=await db.$transaction(async tx=>{
 			const duplicate=await tx.fundingRequest.findUnique({where:{idempotencyKey}});
 			if(duplicate){
-				if(duplicate.userId!==user.id||duplicate.accountMode!==user.accountMode||duplicate.type!==parsed.type||!duplicate.amount.equals(parsed.amount)||duplicate.currency!==currency||duplicate.paymentMethodId!==parsed.paymentMethodId)throw new Error('IDEMPOTENCY_KEY_REUSED');
+				if(duplicate.userId!==user.id||duplicate.accountMode!==user.accountMode||duplicate.type!==parsed.type||!duplicate.amount.equals(parsed.amount)||duplicate.currency!==currency||duplicate.paymentMethodId!==(parsed.paymentMethodId||null))throw new Error('IDEMPOTENCY_KEY_REUSED');
 				return {request:duplicate,replay:true};
 			}
 			const fundingUser=await tx.user.findUniqueOrThrow({where:{id:user.id},select:{kycStatus:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true},take:1}}});
@@ -79,17 +79,19 @@ export async function POST(req:Request){
 			if(parsed.type==='WITHDRAWAL'&&fundingUser.accountRestricted)throw new Error('ACCOUNT_RESTRICTED');
 			if(user.accountMode==='REAL'&&(fundingUser.kycStatus!==KycStatus.APPROVED||!fundingUser.kyc?.submittedAt||fundingUser.kycDocuments.length===0))throw new Error('REAL_KYC_REQUIRED');
 			const completedInvestment=await tx.investmentRequest?.findFirst?.({where:{userId:user.id,accountMode:user.accountMode,status:{in:[InvestmentStatus.COMPLETED,InvestmentStatus.SETTLED]}},select:{id:true}}) ?? null;
-			const method=await tx.paymentMethod.findUnique({where:{id:parsed.paymentMethodId}});
+			const method=parsed.paymentMethodId?await tx.paymentMethod.findUnique({where:{id:parsed.paymentMethodId}}):null;
+			const manualRealDeposit=user.accountMode==='REAL'&&parsed.type==='DEPOSIT'&&!parsed.paymentMethodId;
 			const methodEnabled=!!method?.enabled&&(parsed.type==='DEPOSIT'?method.depositEnabled:method.withdrawalEnabled);
 			const correctMode=method?.demoOnly===(user.accountMode==='DEMO');
-			if(!method||!methodEnabled||!method.currencies.includes(currency)||!correctMode)throw new Error('PAYMENT_METHOD_UNAVAILABLE');
+			if(!manualRealDeposit&&(!method||!methodEnabled||!method.currencies.includes(currency)||!correctMode))throw new Error('PAYMENT_METHOD_UNAVAILABLE');
 			const amount=new Prisma.Decimal(parsed.amount);
-			if(parsed.type==='WITHDRAWAL'&&(amount.lt(method.minimumAmount)||(method.maximumAmount&&amount.gt(method.maximumAmount))))throw new Error('AMOUNT_OUT_OF_RANGE');
-			if(parsed.type==='DEPOSIT'&&!method.demoOnly&&!method.destination&&!method.instructions)throw new Error('PAYMENT_INSTRUCTIONS_UNAVAILABLE');
+			if(parsed.type==='WITHDRAWAL'&&method&&(amount.lt(method.minimumAmount)||(method.maximumAmount&&amount.gt(method.maximumAmount))))throw new Error('AMOUNT_OUT_OF_RANGE');
+			if(parsed.type==='DEPOSIT'&&method&&!method.demoOnly&&!method.destination&&!method.instructions)throw new Error('PAYMENT_INSTRUCTIONS_UNAVAILABLE');
 			if(parsed.type==='WITHDRAWAL'){
+				const withdrawalMethod=method!;
 				if(!completedInvestment)throw new Error('FIRST_TRADE_REQUIRED');
-				if(!method.demoOnly&&!parsed.destinationInfo)throw new Error('WITHDRAWAL_DESTINATION_REQUIRED');
-				if(!method.demoOnly&&method.requiresNetwork&&!parsed.network)throw new Error('WITHDRAWAL_NETWORK_REQUIRED');
+				if(!withdrawalMethod.demoOnly&&!parsed.destinationInfo)throw new Error('WITHDRAWAL_DESTINATION_REQUIRED');
+				if(!withdrawalMethod.demoOnly&&withdrawalMethod.requiresNetwork&&!parsed.network)throw new Error('WITHDRAWAL_NETWORK_REQUIRED');
 				const code=`USER:${user.id}:${user.accountMode}:${currency}`;
 				const account=await tx.ledgerAccount.findUnique({where:{code}});
 				const currentBalance=account?await balance(tx,account.id):new Prisma.Decimal(0);
@@ -101,17 +103,17 @@ export async function POST(req:Request){
 			const request=await tx.fundingRequest.create({data:{
 				userId:user.id,
 				type:parsed.type,
-				method:method.name,
+				method:method?.name||'Manual admin review',
 				amount,
 				currency,
 				status:FundingStatus.PENDING_REVIEW,
 				accountMode:user.accountMode,
-				paymentMethodId:method.id,
+				paymentMethodId:method?.id||null,
 				idempotencyKey,
 				transactionReference:parsed.transactionReference||null,
 				referenceInfo:parsed.referenceInfo||null,
 				senderInfo:parsed.senderInfo||null,
-				destinationInfo:method.demoOnly?null:parsed.type==='DEPOSIT'?method.destination:parsed.destinationInfo,
+				destinationInfo:method?.demoOnly?null:method?parsed.type==='DEPOSIT'?method.destination:parsed.destinationInfo:parsed.destinationInfo||null,
 				beneficiaryInfo:parsed.beneficiaryInfo||null,
 				network:parsed.network||null,
 				note:parsed.note||null,

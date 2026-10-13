@@ -12,6 +12,7 @@ export async function GET(){
 		const user=await requireUser();
 		const demo=user.accountMode==='DEMO';
 		const funding=demo?null:await getFundingProviderReadiness();
+		const manualDepositReviewAvailable=!demo;
 			const providerFundingAvailable=!!funding?.workflowEnabled;
 		stage='database-query';
 			const methods=await db.paymentMethod.findMany({where:{enabled:true,demoOnly:demo},orderBy:{displayOrder:'asc'},select:{id:true,name:true,currencies:true,destination:true,instructions:true,minimumAmount:true,maximumAmount:true,depositEnabled:true,withdrawalEnabled:true,requiresNetwork:true,demoOnly:true}});
@@ -23,6 +24,7 @@ export async function GET(){
 				fundingStatus:demo?'DEMO':providerFundingAvailable?'AVAILABLE':realFundingAvailable?'MANUAL_REVIEW':funding?.status||'NOT_CONFIGURED',
 			realFundingAvailable,
 				realWithdrawalAvailable,
+				manualDepositReviewAvailable,
 		}),{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){
 		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
