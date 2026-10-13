@@ -70,7 +70,10 @@ export const authOptions:NextAuthOptions={
         u=await db.$transaction(async tx=>{
           const account=await tx.user.findUnique({where:{email:configuredEmail}});
           const existingAdmin=await tx.user.findFirst({where:{role:Role.ADMIN},select:{id:true}});
-          if(existingAdmin&&existingAdmin.id!==account?.id)return account;
+          if(existingAdmin&&existingAdmin.id!==account?.id){
+            if(account)return account;
+            return tx.user.update({where:{id:existingAdmin.id},data:{email:configuredEmail,passwordHash,name:authConfig.adminUsername!.trim(),status:UserStatus.ACTIVE,requiresRegistrationVerification:false}});
+          }
           if(account){
             if(account.role===Role.ADMIN)return account;
             return tx.user.update({where:{id:account.id},data:{passwordHash,name:authConfig.adminUsername!.trim(),role:Role.ADMIN,status:UserStatus.ACTIVE,requiresRegistrationVerification:false}});
