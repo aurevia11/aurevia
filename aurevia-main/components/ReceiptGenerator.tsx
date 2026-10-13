@@ -55,7 +55,7 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 				<div className="flex items-center gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-full bg-slate-900 text-lg font-bold text-white">A</span><div><b className="block text-base">Aurevia Invest</b><span className="text-xs text-slate-500">Account services</span></div></div>
 				<span className={`shrink-0 border px-3 py-1 text-xs font-bold ${approved?'border-emerald-200 bg-emerald-50 text-emerald-800':'border-amber-200 bg-amber-50 text-amber-800'}`}>{receipt.status}</span>
 			</header>
-			{receipt.accountMode==='REAL'&&<p className="mt-4 border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">SIMULATED / CONFIGURED REAL DEPOSIT · No payment was processed and no money moved.</p>}
+			{receipt.accountMode==='REAL'&&<p className="mt-4 border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-bold text-amber-900">REAL ACCOUNT REQUEST · Internal ledger review is required before funds are credited.</p>}
 			<div className="py-5"><p className="text-xs font-semibold uppercase text-slate-500">Deposit Receipt</p><h3 className="mt-2 text-2xl font-semibold">{approved?'Deposit approved':'Deposit request received'}</h3><p className="mt-1 text-sm text-slate-500">{dateLabel(receipt.createdAt)}</p></div>
 			<dl className="grid gap-x-8 border-y border-slate-200 py-4 text-sm sm:grid-cols-2">
 				<div className="py-2"><dt className="text-xs text-slate-500">Transaction reference</dt><dd className="mt-1 break-all font-medium">{receipt.reference}</dd></div>
@@ -70,8 +70,8 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 					{receipt.reviewedBy&&<div className="py-2 sm:col-span-2"><dt className="text-xs text-slate-500">Reviewed by</dt><dd className="mt-1 font-medium">{receipt.reviewedBy.name||receipt.reviewedBy.email}</dd>{receipt.reviewedBy.name&&<dd className="break-all text-xs text-slate-500">{receipt.reviewedBy.email}</dd>}</div>}
 				</>}
 			</dl>
-			<p className="py-5 text-sm leading-6 text-slate-700">{receipt.accountMode==='REAL'?approved?'The configured simulated amount has been credited to your REAL account balance. No payment was processed.':'Your configured REAL balance credit request is awaiting administrator review. No payment was processed.':approved?'Payment has been successfully credited to your account.':'Your funding request has been received and is being reviewed.'}</p>
-			<footer className="border-t border-slate-200 pt-3 text-xs text-slate-500">This is a computer-generated receipt from Aurevia Invest{receipt.accountMode==='REAL'?'. Simulated/configured internal ledger entry only.':''}</footer>
+			<p className="py-5 text-sm leading-6 text-slate-700">{receipt.accountMode==='REAL'?approved?'The approved amount has been credited to your Real Account balance after review.':'Your Real Account request is awaiting administrator review before any ledger credit is posted.':approved?'Payment has been successfully credited to your account.':'Your funding request has been received and is being reviewed.'}</p>
+			<footer className="border-t border-slate-200 pt-3 text-xs text-slate-500">This is a computer-generated receipt from Aurevia Invest.</footer>
 		</article>
 		<div className="flex flex-wrap gap-2"><button type="button" className="btn min-h-10 bg-white/5" disabled={busy} onClick={()=>void exportReceipt('png')}><Download size={14}/>{busy?'Preparing…':'Download PNG'}</button><button type="button" className="btn min-h-10 bg-white/5" disabled={busy} onClick={()=>void exportReceipt('pdf')}><Download size={14}/>{busy?'Preparing…':'Download PDF'}</button></div>
 		{error&&<p className="text-sm text-loss" role="alert">{error}</p>}
