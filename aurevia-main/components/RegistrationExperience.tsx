@@ -1,6 +1,6 @@
 'use client';
 
-import {FormEvent,useEffect,useState} from 'react';
+import {FormEvent,useState} from 'react';
 import {useRouter} from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
@@ -23,13 +23,7 @@ export default function RegistrationExperience(){
 	const {translate}=useLocale();
 	const [details,setDetails]=useState(initialDetails);
 	const [termsAccepted,setTermsAccepted]=useState(false);
-	const [stage,setStage]=useState<'details'|'verify'>('details');
-	const [verificationEmail,setVerificationEmail]=useState('');
-	const [verificationChannel,setVerificationChannel]=useState<'email'|'sms'|'unknown'>('unknown');
-	const [verificationCode,setVerificationCode]=useState('');
-	const [resendSeconds,setResendSeconds]=useState(0);
 	const [error,setError]=useState('');
-	const [notice,setNotice]=useState('');
 	const [countryError,setCountryError]=useState('');
 	const [dateError,setDateError]=useState('');
 	const [phoneError,setPhoneError]=useState('');
@@ -38,12 +32,6 @@ export default function RegistrationExperience(){
 	const router=useRouter();
 	const residence=findCountry(details.residenceCountry);
 
-	useEffect(()=>{
-		if(resendSeconds<=0)return;
-		const timer=window.setInterval(()=>setResendSeconds(value=>Math.max(0,value-1)),1000);
-		return()=>window.clearInterval(timer);
-	},[resendSeconds]);
-
 	function update<K extends keyof RegistrationDetails>(key:K,value:RegistrationDetails[K]){
 		setDetails(current=>({...current,[key]:value}));
 	}
@@ -51,7 +39,7 @@ export default function RegistrationExperience(){
 	async function submit(event:FormEvent<HTMLFormElement>){
 		event.preventDefault();
 		if(busy)return;
-		setError('');setCountryError('');setDateError('');setPhoneError('');setPasswordError('');setNotice('');
+		setError('');setCountryError('');setDateError('');setPhoneError('');setPasswordError('');
 		const date=parseDateOfBirth(details.dateOfBirth);
 		const phone=details.phoneNumber.trim()?normalizePhoneE164(details.phoneNumber,details.phoneCountry as CountryCode):'';
 		let invalid=false;
@@ -65,52 +53,19 @@ export default function RegistrationExperience(){
 			const response=await fetch('/api/register',{method:'POST',headers:{'content-type':'application/json','accept':'application/json'},body:JSON.stringify({name:`${details.firstName.trim()} ${details.lastName.trim()}`.trim(),email:details.email,password:details.password,country:residence.name,phone,dateOfBirth:details.dateOfBirth,accountMode:details.accountMode,termsAccepted})});
 			const result=await response.json().catch(()=>({}));
 			if(!response.ok){
-				if(result.verificationPending){
-					setVerificationEmail(details.email);
-					setVerificationChannel(result.channel==='sms'?'sms':result.channel==='email'?'email':'unknown');
-					setResendSeconds(result.resendAfterSeconds||0);
-					setStage('verify');
-				}
 				setError(result.requestId?`${result.error||translate('registrationFailed')} (Reference: ${result.requestId})`:result.error||translate('registrationFailed'));return;
 			}
-			if(!result.verificationRequired){
-				router.replace('/login?registered=1');
-				router.refresh();
-				return;
-			}
-			setVerificationEmail(details.email);
-			setVerificationChannel(result.channel==='sms'?'sms':result.channel==='email'?'email':'unknown');
-			setResendSeconds(result.resendAfterSeconds||60);
-			setStage('verify');
-			setNotice(result.message||translate('verificationPending'));
-		}catch{setError(translate('unableRegistration'));}
-		finally{setBusy(false);}
-	}
-
-	async function verify(event:FormEvent<HTMLFormElement>){
-		event.preventDefault();if(busy)return;setBusy(true);setError('');setNotice('');
-		try{
-			const response=await fetch('/api/register/verify',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:verificationEmail,code:verificationCode})});
-			const result=await response.json();
-			if(!response.ok)throw new Error(result.error||translate('verificationFailed'));
-			router.replace('/login?verified=1');
+			router.replace('/login?registered=1');
 			router.refresh();
-		}catch(exception){setError(exception instanceof Error?exception.message:translate('unableVerify'));}
-		finally{setBusy(false);}
-	}
-
-	async function resend(){
-		if(busy||resendSeconds>0)return;setBusy(true);setError('');setNotice('');
-		try{const response=await fetch('/api/register/resend',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({email:verificationEmail})});const result=await response.json();if(!response.ok)throw new Error(result.error||translate('requestCodeFailed'));setNotice(result.message);setResendSeconds(60);}
-		catch(exception){setError(exception instanceof Error?exception.message:translate('requestCodeFailed'));}
+		}catch{setError(translate('unableRegistration'));}
 		finally{setBusy(false);}
 	}
 
 	return <><Nav/><main className="auth-scene"><section className="auth-card auth-register-card" aria-labelledby="registration-title">
 		<div className="auth-brand"><Image src="/aurevia-logo.png" alt="" width={48} height={48}/><span>AUREVIA <b>INVEST</b></span></div>
-		{stage==='details'?<>
 			<h1 id="registration-title" className="auth-heading">{translate('createAccountTitle')}</h1>
 			<p className="auth-subtitle">{translate('accountDetails')}</p>
+			<p className="text-sm muted">Create an account with an email address and password. No external sign-in or email/SMS verification provider is required. Account eligibility is reviewed by an administrator.</p>
 			<nav className="register-section-jump" aria-label="Registration sections"><a href="#register-profile">{translate('personalInformation')}</a><a href="#register-contact">{translate('contactInformation')}</a><a href="#register-security">{translate('security')}</a><a href="#register-account">{translate('accountType')}</a></nav>
 			<form onSubmit={submit} className="register-form space-y-4">
 				<fieldset id="register-profile" className="register-form-section"><legend className="sr-only">{translate('personalInformation')}</legend><h2>{translate('personalInformation')}</h2><div className="grid gap-3 sm:grid-cols-2">
@@ -137,18 +92,6 @@ export default function RegistrationExperience(){
 				<button type="submit" disabled={busy} className="auth-submit flex w-full items-center justify-center gap-2">{busy?translate('creatingAccount'):translate('createAccountButton')}<ArrowRight size={16} aria-hidden="true"/></button>
 			</form>
 				<p className="auth-footer">{translate('alreadyRegistered')} <Link href="/login" className="auth-link">{translate('signIn')}</Link></p>
-		</>:<>
-			<h1 id="registration-title" className="auth-heading">{translate('verifyAccount')}</h1><p className="auth-subtitle">{translate('verificationCopy')}</p>
-			<form onSubmit={verify} className="mt-5 space-y-4">
-				<label className="auth-field-label">{translate('verificationEmail')}<input className="auth-input" type="email" value={verificationEmail} readOnly/></label>
-				<p className="text-sm muted">{verificationChannel==='unknown'?translate('verificationEligible'):translate('verificationSent') + ` ${verificationChannel==='sms'?'SMS':'email'} ${translate('ifContactEligible')}.`} {translate('codesExpire')}</p>
-				<label className="auth-field-label">{translate('verificationCode')}<input className="auth-input verification-code-input" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} required value={verificationCode} onChange={event=>setVerificationCode(event.target.value.replace(/\D/g,'').slice(0,6))}/></label>
-				{error&&<p className="auth-error" role="alert">{error}</p>}{notice&&<p className="text-sm muted" role="status">{notice}</p>}
-				<button type="submit" disabled={busy||verificationCode.length!==6} className="auth-submit w-full">{busy?translate('verifying'):translate('verifyButton')}</button>
-				<button type="button" className="btn w-full bg-white/5" disabled={busy||resendSeconds>0} onClick={()=>void resend()}>{resendSeconds>0?translate('resendIn',{seconds:resendSeconds}):translate('resend')}</button>
-				<p className="text-xs muted">{translate('verificationNotReceived')} <Link href="/login" className="auth-link">{translate('signIn')}</Link> {translate('or')} <Link href="/support" className="auth-link">{translate('contactSupport')}</Link>.</p>
-			</form>
-		</>}
 		<div className="mt-5 flex items-center gap-2 border-t border-white/10 pt-4 text-xs muted"><ShieldCheck size={15} className="gold" aria-hidden="true"/>{translate('accountPrivate')}</div>
 	</section></main></>;
 }

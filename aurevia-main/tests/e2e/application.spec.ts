@@ -521,10 +521,14 @@ test('registration skips contact verification and platform health remains availa
 	await page.getByLabel('Confirm password').fill(password);
 	await page.getByRole('checkbox').check();
 	const registrationRequest=page.waitForRequest(request=>request.url().endsWith('/api/register')&&request.method()==='POST');
+	const registrationResponse=page.waitForResponse(response=>response.url().endsWith('/api/register')&&response.request().method()==='POST');
 	await page.getByRole('button',{name:'Create account'}).click();
 	const registrationPayload=(await registrationRequest).postDataJSON();
 	expect(registrationPayload).toMatchObject({name:'Temporary Browser Test',country:'United States',phone:'+447400123456',dateOfBirth:'2000-02-29'});
+	expect(await (await registrationResponse).json()).toMatchObject({verificationRequired:false,authMethod:'credentials'});
 	await expect(page).toHaveURL(/\/login\?registered=1/);
+	expect(await db.user.findUniqueOrThrow({where:{email},select:{requiresRegistrationVerification:true}})).toEqual({requiresRegistrationVerification:false});
+	expect(await db.verificationCode.count({where:{user:{email}}})).toBe(0);
 	const providerStats=await page.request.get('http://127.0.0.1:4311/stats');
 	expect(await providerStats.json()).toMatchObject({email:0,sms:0});
 	await page.getByLabel('Email or administrator username').fill(email);
@@ -1301,6 +1305,7 @@ test('administrator user and KYC actions persist and report protected actions',a
 	const investor=users.find((item:{email:string})=>item.email===fixture('INVESTOR_EMAIL'));
 	expect(user).toBeTruthy();
 	expect(investor).toBeTruthy();
+	await db.user.update({where:{id:investor.id},data:{requiresRegistrationVerification:true,verifiedAt:null}});
 	const self=users.find((item:{email:string})=>item.email===fixture('ADMIN_EMAIL'));
 	const selfDemotion=await page.request.patch('/api/admin/users',{data:{userId:self.id,role:'USER'}});
 	expect(selfDemotion.status()).toBe(409);
@@ -1337,6 +1342,7 @@ test('administrator user and KYC actions persist and report protected actions',a
 		const refreshed=await page.request.get('/api/admin/users').then(response=>response.json());
 		return refreshed.find((item:{id:string})=>item.id===investor.id)?.kycStatus;
 	}).toBe('APPROVED');
+	expect(await db.user.findUniqueOrThrow({where:{id:investor.id},select:{requiresRegistrationVerification:true,verifiedAt:true}})).toEqual({requiresRegistrationVerification:false,verifiedAt:null});
 	const verifiedResponse=await page.request.get(`/api/admin/verified-accounts?search=${encodeURIComponent(fixture('INVESTOR_EMAIL'))}&tier=1&status=ACTIVE`);
 	expect(verifiedResponse.ok()).toBe(true);
 	const verifiedResults=await verifiedResponse.json();

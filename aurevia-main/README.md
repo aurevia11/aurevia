@@ -67,6 +67,8 @@ DEMO funding and market activity are simulated. REAL balances are simulated/conf
 
 Two-factor authentication is currently disabled. The legacy database flag is not treated as protection, the profile API reports it as unavailable, and attempts to enable it are rejected until enrollment, login challenges, recovery, and reauthentication are implemented.
 
+Sign-in and registration use the application's own email/username and password credentials; no social login, external identity provider, email OTP, or SMS OTP is required. A phone number is optional contact information and is not verified during registration. New accounts can sign in immediately, while identity/account eligibility remains pending administrator review. Admin approval requires a submitted profile and an approved identity document, clears any legacy external-registration-verification hold without claiming the contact was externally verified, and is recorded in the audit log.
+
 ## Requirements
 
 - Node.js 20+
