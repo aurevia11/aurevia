@@ -22,12 +22,13 @@ const simulatedDatabaseProvider:MarketDataProvider={
 		for(const instrument of instruments){
 			const previous=Number(instrument.price);
 			const price=nextPrice(previous);
+			const volume=Math.max(0.01,Math.abs(price-previous)*100);
 			const candleTime=new Date(Math.floor(timestamp.getTime()/60000)*60000);
 			await db.instrument.update({where:{id:instrument.id},data:{price}});
 			await db.candle.upsert({
 				where:{instrumentId_ts:{instrumentId:instrument.id,ts:candleTime}},
-				update:{close:price,high:Math.max(previous,price),low:Math.min(previous,price),volume:{increment:Math.random()*10+1}},
-				create:{instrumentId:instrument.id,ts:candleTime,open:previous,high:Math.max(previous,price),low:Math.min(previous,price),close:price,volume:Math.random()*10+1},
+				update:{close:price,high:Math.max(previous,price),low:Math.min(previous,price),volume:{increment:volume}},
+				create:{instrumentId:instrument.id,ts:candleTime,open:previous,high:Math.max(previous,price),low:Math.min(previous,price),close:price,volume},
 			});
 			updates.push({symbol:instrument.symbol,price,change:(price-previous)/previous,source:this.source,dataMode:this.dataMode,lastUpdatedAt:timestamp.toISOString()});
 		}
@@ -40,7 +41,14 @@ let activeProvider:MarketDataProvider=simulatedDatabaseProvider;
 
 export function setMarketDataProvider(provider:MarketDataProvider){activeProvider=provider;}
 export function getMarketDataProvider(){return activeProvider;}
-export function nextPrice(price:number){const drift=(Math.random()-.5)*0.004;const shock=(Math.random()-.5)*0.002;return Math.max(0.000001,price*(1+drift+shock));}
+export function nextPrice(price:number){
+	if(!Number.isFinite(price)||price<=0)throw new Error('INVALID_SIMULATED_PRICE');
+	let state=Math.floor(price*1_000_000)>>>0;
+	state^=state<<13;state^=state>>>17;state^=state<<5;
+	state>>>=0;
+	const movement=(state/0x1_0000_0000-.5)*0.006;
+	return Math.max(0.000001,price*(1+movement));
+}
 
 export async function getMarket(){
 	const provider=getMarketDataProvider();

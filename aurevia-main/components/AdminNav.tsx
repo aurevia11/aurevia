@@ -12,6 +12,7 @@ const groups=[
 		{href:'/admin',label:'Control room',icon:LayoutDashboard},
 		{href:'/admin/investments',label:'Investment operations',icon:BriefcaseBusiness},
 		{href:'/admin/payments',label:'Payments',icon:ReceiptText},
+		{href:'/admin/markets',label:'Market management',icon:Settings2},
 	]},
 	{title:'Account review',links:[
 		{href:'/admin#kyc-verification',label:'Pending verification',icon:ClipboardCheck},

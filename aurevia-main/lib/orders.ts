@@ -31,7 +31,11 @@ export async function executeOrderTx(tx:Prisma.TransactionClient,orderId:string,
  const clearing=await ensureSystemAccount(tx,'SYSTEM:CLEARING','Demo simulated spot clearing');
  const existing=await tx.position.findFirst({where:{userId:order.userId,instrumentId:order.instrumentId,accountMode:AccountMode.DEMO,status:'OPEN',side:OrderSide.BUY}});
  if(order.side===OrderSide.BUY){
-  const available=await balance(tx,userAcct.id);
+  const [ledgerBalance,pendingWithdrawals]=await Promise.all([
+   balance(tx,userAcct.id),
+   tx.fundingRequest.aggregate({where:{userId:order.userId,accountMode:order.accountMode,currency:userAcct.currency,type:'WITHDRAWAL',status:{in:['PENDING','PENDING_REVIEW','APPROVED','PROCESSING']}},_sum:{amount:true}}),
+  ]);
+  const available=ledgerBalance.minus(pendingWithdrawals._sum.amount??new Prisma.Decimal(0));
   if(available.lt(notional.plus(fee)))throw new Error('INSUFFICIENT_DEMO_BALANCE');
   await postDoubleEntry(tx,{reference:`TRADE:BUY:${order.id}`,description:`Simulated purchase of ${order.instrument.symbol}`,debitAccountId:userAcct.id,creditAccountId:clearing.id,amount:notional});
   if(fee.gt(0))await postDoubleEntry(tx,{reference:`TRADE:FEE:${order.id}`,description:`Simulated ${order.instrument.symbol} trading fee`,debitAccountId:userAcct.id,creditAccountId:fees.id,amount:fee});

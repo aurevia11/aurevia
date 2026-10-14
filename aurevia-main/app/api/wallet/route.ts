@@ -27,7 +27,7 @@ const schema=z.object({
 	note:z.string().trim().max(500).optional(),
 });
 
-const reservingStatuses=[FundingStatus.PENDING,FundingStatus.PENDING_REVIEW,FundingStatus.PROCESSING];
+const reservingStatuses=[FundingStatus.PENDING,FundingStatus.PENDING_REVIEW,FundingStatus.APPROVED,FundingStatus.PROCESSING];
 
 export async function GET(){
 	try{

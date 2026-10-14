@@ -44,6 +44,8 @@ try{
 	if(published.code!==0||!portMatch)throw new Error('Unable to confirm the loopback-only PostgreSQL port.');
 	const databaseUrl=`postgresql://${databaseUser}@127.0.0.1:${portMatch[1]}/${databaseName}?schema=public`;
 	const environment={...process.env,DATABASE_URL:databaseUrl,DIRECT_URL:databaseUrl,AUREVIA_E2E_DATABASE_URL:databaseUrl,AUREVIA_E2E_DIRECT_URL:databaseUrl,CRON_SECRET:randomUUID(),PORT:String(port),NODE_ENV:'production'};
+	for(const name of Object.keys(environment))if(/SUPABASE|STORAGE/i.test(name))environment[name]='';
+	Object.assign(environment,{SUPABASE_URL:'',SUPABASE_SERVICE_ROLE_KEY:'',NEXT_PUBLIC_SUPABASE_URL:'',NEXT_PUBLIC_SUPABASE_ANON_KEY:''});
 	let ready=false;
 	for(let attempt=0;attempt<60;attempt++){
 		const logs=await capture('docker',['logs',containerName]);

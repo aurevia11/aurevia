@@ -222,6 +222,8 @@ Configure an enabled payment method in `/admin/payments` (store a Bitcoin receiv
 
 Withdrawal requests reserve available balance and require administrator review. Approval checks eligibility and available ledger balance inside a serializable database transaction and is recorded in the audit log; REAL external payout and settlement remain disabled until a payout provider is connected.
 
+Approved DEMO withdrawals remain reserved while processing. Administrators must record a reason for each lifecycle action: completion posts the simulated debit, failure releases the reservation without a debit, and reversal posts a compensating credit. Each transition is audited and idempotent. The `/admin/markets` page can generate bounded, audited price changes for supported simulation instruments; it does not publish live quotes. Users can select a persistent display currency on the dashboard and portfolio; converted amounts are informational only and never change USD ledger balances.
+
 ### 6. Trading
 
 After funding a user account:
@@ -249,8 +251,10 @@ From `/admin`, test:
 - Approve/reject KYC
 - Change USER/ADMIN role
 - Approve/reject funding
+- Process, complete, fail, or reverse DEMO withdrawals with an audit reason
 - Force-close positions
 - Enable/disable instruments
+- Generate audited SIMULATED price ticks from `/admin/markets`
 
 Client stories are private drafts until an administrator links and verifies the client, records a completed REAL withdrawal with its settlement reference, records publication consent, and approves the story. The repository does not include the supplied story photos or a configured image-storage provider, so seeded drafts have no image reference. No story, financial amount, or verification badge is published by seeding.
 - Change system settings
