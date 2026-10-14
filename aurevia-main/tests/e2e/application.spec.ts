@@ -1563,7 +1563,7 @@ test('wallet deposits remain pending and idempotent while withdrawals require a 
 	}finally{await adminLifecycleContext.close();}
 });
 
-test('display currency preference is persisted across wallet, portfolio, and dashboard without changing ledger cash',async({page})=>{
+test('display currency preference persists across account and activity surfaces without changing ledger cash',async({page})=>{
 	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
 	await selectAccountMode(page,'DEMO');
 	const balanceBefore=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
@@ -1581,6 +1581,10 @@ test('display currency preference is persisted across wallet, portfolio, and das
 	await page.goto('/dashboard');
 	await expect(page.getByLabel('Preferred display currency')).toHaveValue('EUR');
 	await expect(page.getByText(/A current configured exchange rate is unavailable/)).toBeVisible();
+	await page.goto('/activity');
+	await expect(page.getByLabel('Preferred display currency')).toHaveValue('EUR');
+	await page.goto('/wallet/transactions');
+	await expect(page.getByLabel('Preferred display currency')).toHaveValue('EUR');
 	expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(balanceBefore);
 });
 

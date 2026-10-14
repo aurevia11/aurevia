@@ -4,6 +4,7 @@ import Link from 'next/link';
 import {useCallback,useEffect,useState} from 'react';
 import {Activity,ArrowUpRight,Building2,CircleDollarSign,Clock3,Landmark,ReceiptText,RefreshCw,ShieldCheck,TrendingDown,TrendingUp,WalletCards} from 'lucide-react';
 import Nav from '@/components/Nav';
+import DisplayCurrencyPanel from '@/components/DisplayCurrencyPanel';
 import {activityCategoryLabel,type ActivityCategory,type ActivityRecord} from '@/lib/activity';
 
 const categories:ActivityCategory[]=['all','trade','personal-trade','investment','deposit','withdrawal','order','position','account','security'];
@@ -30,10 +31,12 @@ export default function AccountActivityExperience(){
 
   function changeCategory(next:ActivityCategory){if(next!==category){setCategory(next);setError('');}}
   function toggleLoading(){if(!busy)void load(true)}
+  const displayValues=(data?.data.items||[]).filter(item=>(item.source!=='ledger'||item.asset==='USD')&&(item.source!=='order'||Number(item.details.filledQuantity)>0)).slice(0,5).map(item=>({label:item.action,amount:item.amount}));
 
   return <><Nav/><main className="account-page activity-page">
     <header className="account-heading"><div><span className="account-kicker">AUDITABLE ACTIVITY</span><h1>Account activity</h1><p>Orders, trades, investments, funding, positions, and account events from persisted records.</p></div><button className="icon-action" type="button" aria-label="Refresh account activity" onClick={toggleLoading} disabled={busy}><RefreshCw size={15} className={busy?'animate-spin':''}/></button></header>
     {data?.accountMode==='REAL'&&<div className="account-callout mb-4"><span>REAL execution and valuation are not connected. This feed contains recorded REAL requests and ledger activity only; it does not manufacture broker confirmations.</span></div>}
+    <DisplayCurrencyPanel values={displayValues}/>
     {error&&<div className="account-callout mb-4" role="alert"><span>{error}</span><button type="button" className="text-link" onClick={()=>void load(true)}>Retry</button></div>}
     <section className="account-panel card p-4"><div className="activity-filter" role="group" aria-label="Activity categories">{categories.map(item=>{const Icon=categoryIcons[item];return <button key={item} type="button" aria-pressed={category===item} className={category===item?'is-active':''} onClick={()=>changeCategory(item)}><Icon size={14} aria-hidden="true"/><span>{categoryLabels[item]}</span></button>})}</div></section>
     <section className="account-panel card mt-4 overflow-hidden">
