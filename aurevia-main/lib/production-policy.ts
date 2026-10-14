@@ -22,6 +22,14 @@ export function getAccountTier(context:TierContext):{label:AccountTier;progress:
 
 export function verifyKycState(status:KycStatus){return status===KycStatus.APPROVED;}
 
+export function validateTierUpgradeApproval(input:{requestCurrentTier:number;requestedTier:number;currentTier:number}){
+	if(input.requestCurrentTier!==input.currentTier||input.requestedTier!==input.currentTier+1)throw new Error('TIER_REQUEST_STALE');
+}
+
+export function validateTierThreeApproval(input:{name:string|null;country:string|null;kycStatus:KycStatus;verificationSubmitted:boolean;approvedIdentityDocuments:number}){
+	if(!input.name?.trim()||!input.country?.trim()||input.kycStatus!==KycStatus.APPROVED||!input.verificationSubmitted||input.approvedIdentityDocuments<1)throw new Error('TIER_3_REQUIREMENTS_NOT_MET');
+}
+
 export function validateWithdrawal(input:WithdrawalValidation){
 	const balance=decimal(input.balance);const pending=decimal(input.pending);const amount=decimal(input.amount);
 	if(!input.withdrawalEnabled)throw new Error('WITHDRAWAL_DISABLED');

@@ -38,11 +38,12 @@ export default function Nav(){
       <Link href="/login" onClick={close}>{translate('signIn')}</Link>
       <Link href="/register" className="nav-cta" onClick={close}>{translate('createAccount')}</Link>
      </section>}
+    {status==='authenticated'&&data?.user&&<div className="nav-account-snapshot"><span className="nav-account-monogram">{(data.user.name||data.user.email||'A').trim().slice(0,1).toUpperCase()}</span><span className="nav-account-copy"><small>ACCOUNT SPACE</small><b>{data.user.name||data.user.email}</b><em>{data.user.accountMode} ACCOUNT</em></span></div>}
      <section className="nav-menu-group" aria-labelledby="nav-overview-heading">
       <h2 className="nav-menu-section" id="nav-overview-heading">OVERVIEW</h2>
       <Link href="/" onClick={close} aria-current={pathname==='/'?'page':undefined}>{translate('home')}</Link>
       <Link href="/dashboard" onClick={close} aria-current={active('/dashboard')?'page':undefined}><LayoutDashboard size={16} aria-hidden="true"/>{translate('dashboard')}</Link>
-      {status==='authenticated'&&data?.user?.role==='ADMIN'&&<Link href="/admin" onClick={close} aria-current={active('/admin')?'page':undefined}><ShieldCheck size={16} aria-hidden="true"/>{translate('admin')}</Link>}
+      {status==='authenticated'&&data?.user?.role==='ADMIN'&&<Link href="/admin" className="nav-admin-entry" onClick={close} aria-current={active('/admin')?'page':undefined}><ShieldCheck size={16} aria-hidden="true"/>Open Admin Console</Link>}
      </section>
      <section className="nav-menu-group" aria-labelledby="nav-investing-heading">
       <h2 className="nav-menu-section" id="nav-investing-heading">INVESTING</h2>

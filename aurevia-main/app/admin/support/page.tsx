@@ -3,7 +3,7 @@
 import {FormEvent,useCallback,useEffect,useState} from 'react';
 import Link from 'next/link';
 import {ArrowLeft,CheckCheck,MessageSquareText,RefreshCw,Send} from 'lucide-react';
-import Nav from '@/components/Nav';
+import AdminNav from '@/components/AdminNav';
 
 type Conversation={id:string;user:{id:string;email:string;name:string|null};accountMode:'DEMO'|'REAL';subject:string;status:string;priority:string;category:string;isComplaint:boolean;hasAttachment:boolean;createdAt:string;updatedAt:string;lastMessageAt:string;transaction:{id:string;type:string;accountMode:'DEMO'|'REAL';status:string;amount:string;currency:string}|null;messages:Array<{id:string;authorType:string;body:string;createdAt:string}>};
 type TicketStatus='OPEN'|'IN_REVIEW'|'WAITING_FOR_USER'|'RESOLVED'|'CLOSED';
@@ -46,7 +46,7 @@ export default function AdminSupport(){
 		catch(exception){setError(exception instanceof Error?exception.message:'Attachment unavailable.')}
 	}
 
-	return <><Nav/><main className="account-page">
+	return <><AdminNav/><main className="account-page">
 		<header className="account-heading"><div><span className="account-kicker">ADMINISTRATION · CUSTOMER SUPPORT</span><h1>Support inbox</h1><p>Review private Nova escalations and respond using the recorded account context.</p></div><div className="flex gap-2"><Link className="button-secondary" href="/admin"><ArrowLeft size={14}/> Admin home</Link><button className="icon-action" type="button" aria-label="Refresh support inbox" onClick={()=>void load()}><RefreshCw size={15}/></button></div></header>
 		{notice&&<p className="mb-3 text-sm text-profit" role="status">{notice}</p>}{error&&<p className="mb-3 text-sm text-loss" role="alert">{error}</p>}
 		<div className="admin-support-layout">

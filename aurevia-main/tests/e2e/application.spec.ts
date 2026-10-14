@@ -22,7 +22,7 @@ const viewports=[
 
 const publicRoutes=['/','/login','/register','/markets','/client-stories','/about','/education','/support','/waitlist','/terms','/privacy','/risk-disclosure'];
 const authenticatedRoutes=['/dashboard','/trade','/markets','/portfolio','/orders','/investments','/wallet','/wallet/transactions','/kyc','/tier','/settings','/support','/notifications'];
-const adminRoutes=['/admin/login','/admin','/admin/investments','/admin/payments','/admin/support','/admin/tiers'];
+const adminRoutes=['/admin/login','/admin','/admin/investments','/admin/payments','/admin/support','/admin/tiers','/admin/verified-accounts'];
 
 function fixture(name:string){
 	const value=process.env[`AUREVIA_E2E_${name}`];
@@ -177,6 +177,9 @@ test('login and registration fields receive real pointer and keyboard input',asy
 
 	await page.goto('/register');
 	await waitForStartup(page);
+	await page.getByRole('navigation',{name:'Registration sections'}).getByRole('link',{name:'Contact information'}).click();
+	await expect(page).toHaveURL(/#register-contact$/);
+	await expect(page.locator('#register-contact')).toBeVisible();
 	await typeInto(page,page.getByLabel('First name'),'Browser');
 	await typeInto(page,page.getByLabel('Last name'),'Input Test');
 	const dateOfBirth=page.getByLabel('Date of birth');
@@ -238,6 +241,7 @@ test('authenticated desktop navigation opens without overflow and closes after n
 	await expect(menu).toHaveAttribute('aria-expanded','true');
 	await expect(navigation.getByRole('heading',{name:/investing/i})).toBeVisible();
 	await expect(navigation.getByRole('heading',{name:/account & support/i})).toBeVisible();
+	expect(await page.getByRole('navigation',{name:'Administrator navigation'}).count()).toBe(0);
 	await expectNoHorizontalOverflow(page);
 	await navigation.getByRole('link',{name:'Notifications'}).click();
 	await expect(page).toHaveURL(/\/notifications/);
@@ -1118,8 +1122,12 @@ test('administrator email sign-in persists through refresh and logout removes ad
 	await page.getByRole('button',{name:'Enter control center'}).click();
 	await page.waitForURL(/\/admin$/);
 	await expect(page.getByRole('heading',{name:'Aurevia administration'})).toBeVisible();
-	await page.getByRole('banner').getByRole('button',{name:'Open navigation'}).click();
-	await expect(page.getByRole('navigation',{name:'Primary navigation'}).getByRole('link',{name:'Admin',exact:true})).toBeVisible();
+	await page.getByRole('banner').getByRole('button',{name:'Open admin menu'}).click();
+	const adminNavigation=page.getByRole('navigation',{name:'Administrator navigation'});
+	await expect(adminNavigation.getByRole('link',{name:'Control room'})).toBeVisible();
+	await expect(adminNavigation.getByRole('link',{name:'Verified accounts'})).toBeVisible();
+	await expect(adminNavigation.getByRole('link',{name:'Payments'})).toBeVisible();
+	expect(await page.getByRole('navigation',{name:'Primary navigation'}).count()).toBe(0);
 	await page.reload();
 	await expect(page.getByRole('heading',{name:'Aurevia administration'})).toBeVisible();
 	await logout(page);
@@ -1177,6 +1185,7 @@ test('a normal customer cannot access the administrator dashboard',async({page})
 	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
 	await page.goto('/admin');
 	await expect(page).toHaveURL(/\/login/);
+	expect((await page.request.get('/api/admin/verified-accounts')).status()).toBe(403);
 });
 
 test('administrator user and KYC actions persist and report protected actions',async({page})=>{
@@ -1203,6 +1212,8 @@ test('administrator user and KYC actions persist and report protected actions',a
 	await userRow.getByRole('button',{name:'Make user'}).click();
 	await expect(userRow.getByRole('button',{name:'Make admin'})).toBeVisible();
 	const kycPanel=page.locator('#kyc-verification');
+	await expect(kycPanel.locator('div.mt-3.divide-y')).toHaveCount(0);
+	await kycPanel.getByLabel('Review queue').selectOption('ALL');
 	const investorRow=kycPanel.locator('article').filter({hasText:fixture('INVESTOR_EMAIL')}).first();
 	await investorRow.getByRole('button',{name:'Reject',exact:true}).click();
 	await expect.poll(async()=>{
@@ -1219,6 +1230,17 @@ test('administrator user and KYC actions persist and report protected actions',a
 		const refreshed=await page.request.get('/api/admin/users').then(response=>response.json());
 		return refreshed.find((item:{id:string})=>item.id===investor.id)?.kycStatus;
 	}).toBe('APPROVED');
+	const verifiedResponse=await page.request.get(`/api/admin/verified-accounts?search=${encodeURIComponent(fixture('INVESTOR_EMAIL'))}&tier=1&status=ACTIVE`);
+	expect(verifiedResponse.ok()).toBe(true);
+	const verifiedResults=await verifiedResponse.json();
+	expect(verifiedResults.total).toBe(1);
+	expect(verifiedResults.items[0]).toMatchObject({id:investor.id,email:fixture('INVESTOR_EMAIL'),kycStatus:'APPROVED',approvedTier:1,approval:{reviewedBy:{email:fixture('ADMIN_EMAIL')}}});
+	await page.goto('/admin/verified-accounts');
+	await expect(page.getByRole('heading',{name:'Verified Accounts'})).toBeVisible();
+	await page.getByLabel('Search').fill(fixture('INVESTOR_EMAIL'));
+	await expect(page.getByText(fixture('INVESTOR_EMAIL'),{exact:true})).toBeVisible();
+	await page.getByText(fixture('INVESTOR_EMAIL'),{exact:true}).click();
+	await expect(page.getByText(fixture('ADMIN_EMAIL'),{exact:true})).toBeVisible();
 });
 
 test('Nova activity is redacted and visible only to administrators',async({page})=>{
@@ -1282,6 +1304,8 @@ test('admin pages render for authenticated administrator at requested viewports'
 			const response=await page.goto(route);
 			expect(response?.status(),route).toBe(200);
 			await expect(page.locator('h1').first(),route).toBeVisible();
+			if(route!=='/admin/login'&&viewport.width<1920)await expect(page.getByRole('button',{name:'Open admin menu'}),route).toBeVisible();
+			if(route!=='/admin/login'&&viewport.width>=1920)await expect(page.getByRole('navigation',{name:'Administrator navigation'}).getByRole('link',{name:'Control room'}),route).toBeVisible();
 			await expectNoHorizontalOverflow(page);
 		}
 	}

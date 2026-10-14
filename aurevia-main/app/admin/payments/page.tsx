@@ -3,7 +3,7 @@
 import {FormEvent,useEffect,useState} from 'react';
 import Link from 'next/link';
 import {ArrowLeft,Check,Edit3,Plus,RefreshCw,Save,ToggleLeft,ToggleRight} from 'lucide-react';
-import Nav from '@/components/Nav';
+import AdminNav from '@/components/AdminNav';
 
 type Method={id:string;name:string;enabled:boolean;demoOnly:boolean;depositEnabled:boolean;withdrawalEnabled:boolean;requiresNetwork:boolean;currencies:string[];destination:string|null;instructions:string|null;minimumAmount:string|number;maximumAmount:string|number|null;processingNotes:string|null;displayOrder:number};
 type Funding={id:string;user:{email:string;name?:string|null};type:string;accountMode:string;method:string;amount:string|number;currency:string;status:string;createdAt:string;destinationInfo?:string|null;transactionReference?:string|null;referenceInfo?:string|null;adminNote?:string|null;settlementReference?:string|null;settledAt?:string|null;hasReceipt?:boolean};
@@ -80,7 +80,7 @@ export default function AdminPayments(){
 		catch(exception){setError(exception instanceof Error?exception.message:'Receipt unavailable.')}
 	}
 
-	return <><Nav/><main className="account-page">
+	return <><AdminNav/><main className="account-page">
 		<header className="account-heading"><div><span className="account-kicker">ADMINISTRATION · PAYMENT OPERATIONS</span><h1>Payment configuration</h1><p>Manage available methods and review submitted deposit and withdrawal requests.</p></div><div className="flex gap-2"><Link className="button-secondary" href="/admin"><ArrowLeft size={14}/> Admin home</Link><button className="icon-action" type="button" aria-label="Refresh payment administration" onClick={()=>void load()}><RefreshCw size={15}/></button></div></header>
 		{message&&<p className="mb-3 text-sm text-profit" role="status">{message}</p>}{error&&<p className="mb-3 text-sm text-loss" role="alert">{error}</p>}
 		<div className="account-content-grid admin-payment-grid">

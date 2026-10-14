@@ -3,7 +3,7 @@
 import {useCallback,useEffect,useState} from 'react';
 import Link from 'next/link';
 import {ArrowLeft,RefreshCw,ShieldCheck} from 'lucide-react';
-import Nav from '@/components/Nav';
+import AdminNav from '@/components/AdminNav';
 
 type TierRequest={
 	id:string;currentTier:number;requestedTier:number;status:'PENDING_REVIEW'|'NEEDS_INFORMATION'|'APPROVED'|'REJECTED';
@@ -47,7 +47,7 @@ export default function AdminTierReviews(){
 		}catch(exception){setError(exception instanceof Error?exception.message:'Unable to save tier review.')}
 		finally{setBusy(false)}
 	}
-	return <><Nav/><main className="account-page">
+	return <><AdminNav/><main className="account-page">
 		<header className="account-heading"><div><span className="account-kicker">ADMINISTRATION · ACCOUNT ACCESS</span><h1>Tier review queue</h1><p>Review each step-up request, record an auditable reason, and notify the user.</p></div><div className="flex gap-2"><Link className="button-secondary" href="/admin"><ArrowLeft size={14}/> Admin home</Link><button className="icon-action" type="button" aria-label="Refresh tier requests" onClick={()=>void load()}><RefreshCw size={15}/></button></div></header>
 		{notice&&<p className="mb-3 text-sm text-profit" role="status">{notice}</p>}{error&&<p className="mb-3 text-sm text-loss" role="alert">{error}</p>}
 		<div className="admin-support-layout">

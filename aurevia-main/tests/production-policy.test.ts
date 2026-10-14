@@ -1,7 +1,7 @@
 import {describe,expect,it} from 'vitest';
 import {AccountMode,KycStatus} from '@prisma/client';
 import {DEMO_STARTING_BALANCE} from '../lib/ledger';
-import {getAccountTier,validateDepositApproval,validateWithdrawal,verifyKycState} from '../lib/production-policy';
+import {getAccountTier,validateDepositApproval,validateTierThreeApproval,validateTierUpgradeApproval,validateWithdrawal,verifyKycState} from '../lib/production-policy';
 
 describe('production account policy',()=>{
   it('starts every demo account with exactly 5,000 simulated USD',()=>{
@@ -22,6 +22,13 @@ describe('production account policy',()=>{
     expect(approved.label).toBe('TIER 2');
     expect(approved.eligibleForRealTrading).toBe(false);
     expect(approved.verified).toBe(false);
+  });
+
+  it('rejects stale tier reviews and requires approved identity evidence for Tier 3',()=>{
+    expect(()=>validateTierUpgradeApproval({requestCurrentTier:1,requestedTier:2,currentTier:1})).not.toThrow();
+    expect(()=>validateTierUpgradeApproval({requestCurrentTier:1,requestedTier:2,currentTier:2})).toThrow('TIER_REQUEST_STALE');
+    expect(()=>validateTierThreeApproval({name:'Ada User',country:'US',kycStatus:KycStatus.APPROVED,verificationSubmitted:true,approvedIdentityDocuments:1})).not.toThrow();
+    expect(()=>validateTierThreeApproval({name:'Ada User',country:'US',kycStatus:KycStatus.PENDING,verificationSubmitted:true,approvedIdentityDocuments:0})).toThrow('TIER_3_REQUIREMENTS_NOT_MET');
   });
 
   it('rejects withdrawal when disabled, restricted, or before the first completed investment',()=>{
