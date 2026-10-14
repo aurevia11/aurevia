@@ -11,8 +11,9 @@ import {useLocale} from '@/lib/i18n-context';
 import QRCode from 'qrcode';
 
 type PaymentMethod={id:string;name:string;currencies:string[];destination:string|null;instructions:string|null;minimumAmount:string|number;maximumAmount:string|number|null;depositEnabled:boolean;withdrawalEnabled:boolean;requiresNetwork:boolean;demoOnly:boolean};
-type FundingRecord={id:string;type:'DEPOSIT'|'WITHDRAWAL';method:string;amount:number|string;creditedAmount?:number|string|null;currency:string;status:string;accountMode:'DEMO'|'REAL';createdAt:string;reviewedAt?:string|null;reviewedBy?:{name:string|null;email:string}|null;transactionReference?:string|null;adminNote?:string|null;hasReceipt?:boolean;user?:{name:string|null;email:string}};
-type WalletData={accountMode:'DEMO'|'REAL';balance:number|string|null;balances:Array<{currency:string;balance:number|string}>;transactions:FundingRecord[]};
+type FundingRecord={id:string;type:'DEPOSIT'|'WITHDRAWAL';method:string;amount:number|string;creditedAmount?:number|string|null;currency:string;status:string;accountMode:'DEMO'|'REAL';createdAt:string;reviewedAt?:string|null;settledAt?:string|null;settlementReference?:string|null;reviewedBy?:{name:string|null;email:string}|null;transactionReference?:string|null;adminNote?:string|null;hasReceipt?:boolean;user?:{name:string|null;email:string}};
+type LedgerReceipt={id:string;reference:string;description:string;type:'CREDIT'|'DEBIT';amount:number|string;currency:string;createdAt:string};
+type WalletData={accountMode:'DEMO'|'REAL';balance:number|string|null;balances:Array<{currency:string;balance:number|string}>;transactions:FundingRecord[];adminLedgerReceipts:LedgerReceipt[]};
 type CurrencyRate={rate:number|string|null;source:string|null;observedAt:string|null;status:'CURRENT'|'STALE'|'UNAVAILABLE'};
 type PaymentMethodsResponse={methods:PaymentMethod[];fundingStatus:'DEMO'|'AVAILABLE'|'MANUAL_REVIEW'|'NOT_CONFIGURED'|'DISABLED'|'ERROR';realFundingAvailable:boolean;realWithdrawalAvailable:boolean;manualDepositReviewAvailable:boolean};
 type KycData={kycStatus:string;documents:number;verificationProfileSubmitted:boolean;depositEnabled:boolean;withdrawalEnabled:boolean;accountRestricted:boolean;restrictionReason:string|null;canWithdraw?:boolean};
@@ -41,7 +42,7 @@ function isWalletData(value:unknown):value is WalletData{
 	if(!value||typeof value!=='object')return false;
 	const data=value as Partial<WalletData>;
 	const validAmount=(amount:unknown)=>amount===null||(typeof amount==='number'&&Number.isFinite(amount))||(typeof amount==='string'&&amount.trim()!==''&&Number.isFinite(Number(amount)));
-	return (data.accountMode==='DEMO'||data.accountMode==='REAL')&&validAmount(data.balance)&&Array.isArray(data.balances)&&data.balances.every(item=>!!item&&typeof item.currency==='string'&&validAmount(item.balance))&&Array.isArray(data.transactions)&&data.transactions.every(item=>!!item&&typeof item.id==='string'&&(item.type==='DEPOSIT'||item.type==='WITHDRAWAL')&&typeof item.status==='string'&&validAmount(item.amount));
+	return (data.accountMode==='DEMO'||data.accountMode==='REAL')&&validAmount(data.balance)&&Array.isArray(data.balances)&&data.balances.every(item=>!!item&&typeof item.currency==='string'&&validAmount(item.balance))&&Array.isArray(data.transactions)&&data.transactions.every(item=>!!item&&typeof item.id==='string'&&(item.type==='DEPOSIT'||item.type==='WITHDRAWAL')&&typeof item.status==='string'&&validAmount(item.amount))&&(data.adminLedgerReceipts===undefined||Array.isArray(data.adminLedgerReceipts));
 }
 
 function isPaymentMethodsResponse(value:unknown):value is PaymentMethodsResponse{
@@ -54,7 +55,7 @@ export default function WalletExperience(){
 	const {data:session,status:sessionStatus}=useSession();
 	const {translate}=useLocale();
 	const activeMode=session?.user?.accountMode;
-	const [data,setData]=useState<WalletData>({accountMode:'DEMO',balance:0,balances:[],transactions:[]});
+	const [data,setData]=useState<WalletData>({accountMode:'DEMO',balance:0,balances:[],transactions:[],adminLedgerReceipts:[]});
 	const [methods,setMethods]=useState<PaymentMethod[]>([]);
 	const [fundingStatus,setFundingStatus]=useState<PaymentMethodsResponse['fundingStatus']>('NOT_CONFIGURED');
 	const [realFundingAvailable,setRealFundingAvailable]=useState(false);
@@ -121,7 +122,7 @@ export default function WalletExperience(){
 		]);
 		const [walletRequest,methodsRequest,profileRequest,currencyPreferenceRequest]=requests;
 		if(walletRequest.status==='fulfilled'&&walletRequest.value.response.ok&&isWalletData(walletRequest.value.result)){
-			setData(walletRequest.value.result);setHasWalletData(true);
+			setData({...walletRequest.value.result,adminLedgerReceipts:walletRequest.value.result.adminLedgerReceipts||[]});setHasWalletData(true);
 		}else{
 			const result=walletRequest.status==='fulfilled'?walletRequest.value.result as {error?:string}:null;
 			setData(current=>({...current,balance:null,balances:[],transactions:[]}));
@@ -171,7 +172,7 @@ export default function WalletExperience(){
 
 	useEffect(()=>{
 		if(sessionStatus!=='authenticated')return;
-		setData({accountMode:activeMode||'DEMO',balance:0,balances:[],transactions:[]});
+		setData({accountMode:activeMode||'DEMO',balance:0,balances:[],transactions:[],adminLedgerReceipts:[]});
 		setMethods([]);setMethodId('');setFundingStatus('NOT_CONFIGURED');setRealFundingAvailable(false);setRealWithdrawalAvailable(false);setManualDepositReviewAvailable(false);setProfile(null);setMethodLoadError('');setProfileLoadError('');setHasWalletData(false);
 		void load(true);
 	},[sessionStatus,activeMode,load]);
@@ -239,7 +240,7 @@ export default function WalletExperience(){
 			const response=await fetch('/api/wallet',{method:'POST',headers,body});
 			const result=await response.json();
 			if(!response.ok)throw new Error(result.error||'Unable to submit this request.');
-			if(type==='DEPOSIT')setSubmittedReceipt(result as FundingRecord);
+			setSubmittedReceipt(result as FundingRecord);
 			setMessage(response.status===200?`Request ${result.id} already exists with status ${String(result.status).replaceAll('_',' ')}. No new request was created.`:`Request ${result.id} submitted for administrator review. The ledger has not been posted.`);
 			setAmount('');setTransactionReference('');setReferenceInfo('');setSenderInfo('');setDestinationInfo('');setBeneficiaryInfo('');setNetwork('');setNote('');setProofFile(null);setIdempotencyKey('');setKeyFingerprint('');setConfirming(false);
 			await load();
@@ -303,14 +304,15 @@ export default function WalletExperience(){
 		{error&&<p className="mt-3 text-sm text-loss" role="alert">{error}</p>}
 		{message&&<p className="mt-3 text-sm text-profit" role="status">{message}</p>}
 		<div className="account-metrics mt-3"><div className="account-metric"><span>{translate('pendingReview')}</span><b>{hasWalletData?data.transactions.filter(item=>reserves.includes(item.status)).length:'—'}</b><small>{translate('noLedgerPosting')}</small></div><div className="account-metric"><span>{translate('withdrawalReservations')}</span><b>{hasWalletData?availableBalance===null?'Unavailable':money(pendingWithdrawal,currency):'—'}</b><small>{translate('requestsAwaitingReview',{currency})}</small></div><div className="account-metric"><span>{translate('enabledPaymentMethods')}</span><b>{methodLoadError?'—':methods.length}</b><small>{translate('configuredByAdministrator')}</small></div><div className="account-metric"><span>{translate('recentRequests')}</span><b>{hasWalletData?data.transactions.length:'—'}</b><small>{translate('latest100')}</small></div></div>
-		{submittedReceipt&&<section className="account-panel card mt-4 p-5"><div className="account-panel-title"><div><h2>Pending payment receipt</h2><p className="account-panel-subtitle">Your receipt is ready to download; the request remains subject to administrator review.</p></div></div><ReceiptGenerator receipt={{id:submittedReceipt.id,reference:submittedReceipt.id,status:'PENDING',accountMode:submittedReceipt.accountMode,createdAt:submittedReceipt.createdAt,name:session?.user?.name||'',email:session?.user?.email||'',amount:submittedReceipt.amount,currency:submittedReceipt.currency,method:submittedReceipt.method}}/></section>}
-		{data.transactions.some(transaction=>transaction.type==='DEPOSIT')&&<section className="account-panel card mt-4 p-5"><div className="account-panel-title"><div><h2>Funding receipts</h2><p className="account-panel-subtitle">Download the original pending receipt or, after approval, the credited receipt.</p></div></div><div className="mt-4 grid gap-3">{data.transactions.filter(transaction=>transaction.type==='DEPOSIT').slice(0,10).map(transaction=>{
+		{submittedReceipt&&<section className="account-panel card mt-4 p-5"><div className="account-panel-title"><div><h2>Funding request receipt</h2><p className="account-panel-subtitle">Your generated receipt records the request and its current review status.</p></div></div><ReceiptGenerator receipt={{id:submittedReceipt.id,reference:submittedReceipt.id,status:'PENDING',type:submittedReceipt.type,accountMode:submittedReceipt.accountMode,simulated:submittedReceipt.accountMode==='REAL',createdAt:submittedReceipt.createdAt,name:session?.user?.name||'',email:session?.user?.email||'',amount:submittedReceipt.amount,currency:submittedReceipt.currency,method:submittedReceipt.method}}/></section>}
+		{data.transactions.length>0&&<section className="account-panel card mt-4 p-5"><div className="account-panel-title"><div><h2>Funding receipts</h2><p className="account-panel-subtitle">Download request and approval receipts for deposits and withdrawals recorded in this account.</p></div></div><div className="mt-4 grid gap-3">{data.transactions.slice(0,10).map(transaction=>{
 			const name=transaction.user?.name||session?.user?.name||'';
 			const email=transaction.user?.email||session?.user?.email||'';
 			const common={id:transaction.id,accountMode:transaction.accountMode,createdAt:transaction.createdAt,name,email,amount:transaction.amount,currency:transaction.currency,method:formatFundingMethodLabel(transaction.method),externalReference:transaction.transactionReference};
-			const adminCreatedCredit=transaction.method==='Admin configured simulated REAL deposit';
-			return <details key={transaction.id} className="border-t border-white/10 pt-3"><summary className="min-h-11 cursor-pointer py-2 text-sm">{transaction.accountMode==='REAL'?'Real Account deposit':transaction.status==='APPROVED'?'Approved deposit':'Deposit request'} · {money(Number(transaction.amount),transaction.currency)} · {statuses[transaction.status]||transaction.status}</summary><div className="grid min-w-0 gap-4 pt-3 xl:grid-cols-2">{!adminCreatedCredit&&<ReceiptGenerator receipt={{...common,reference:transaction.id,status:'PENDING'}}/>}{transaction.status==='APPROVED'&&<ReceiptGenerator receipt={{...common,reference:`FUNDING:${transaction.id}:APPROVED`,status:'APPROVED',reviewedAt:transaction.reviewedAt,reviewedBy:transaction.reviewedBy,creditedAmount:transaction.creditedAmount??transaction.amount}}/>}</div></details>;
+			const receiptStatus=transaction.status==='COMPLETED'?'COMPLETED':transaction.status==='APPROVED'?'APPROVED':'PENDING';
+			return <details key={transaction.id} className="border-t border-white/10 pt-3"><summary className="min-h-11 cursor-pointer py-2 text-sm">{transaction.accountMode==='REAL'?'Real Account':''} {transaction.type==='DEPOSIT'?'deposit':'withdrawal'} · {money(Number(transaction.amount),transaction.currency)} · {statuses[transaction.status]||transaction.status}</summary><div className="grid min-w-0 gap-4 pt-3 xl:grid-cols-2"><ReceiptGenerator receipt={{...common,reference:transaction.settlementReference||transaction.id,status:receiptStatus,type:transaction.type,simulated:transaction.accountMode==='REAL',reviewedAt:transaction.settledAt||transaction.reviewedAt,reviewedBy:transaction.reviewedBy,creditedAmount:transaction.creditedAmount??transaction.amount}}/></div></details>;
 		})}</div></section>}
+		{data.adminLedgerReceipts.length>0&&<section className="account-panel card mt-4 p-5"><div className="account-panel-title"><div><h2>Administrator ledger receipts</h2><p className="account-panel-subtitle">Administrator credits are recorded in this account’s ledger and included in the account balance.</p></div></div><div className="mt-4 grid gap-3">{data.adminLedgerReceipts.map(transaction=><details key={transaction.id} className="border-t border-white/10 pt-3"><summary className="min-h-11 cursor-pointer py-2 text-sm">{transaction.type==='CREDIT'?'Administrator credit':'Administrator debit'} · {money(Number(transaction.amount),transaction.currency)} · {new Date(transaction.createdAt).toLocaleString()}</summary><div className="pt-3"><ReceiptGenerator receipt={{id:transaction.id,reference:transaction.reference,status:'COMPLETED',type:transaction.type==='CREDIT'?'CREDIT':'DEBIT',accountMode:data.accountMode,simulated:data.accountMode==='REAL',createdAt:transaction.createdAt,name:session?.user?.name||'',email:session?.user?.email||'',amount:transaction.amount,currency:transaction.currency,method:transaction.description}}/></div></details>)}</div></section>}
 		<div className="account-content-grid">
 			<section className="account-panel card p-5"><div className="account-panel-title"><div><h2>{translate('fundingRequest')}</h2><p className="account-panel-subtitle">{translate('fundingRequestSubtitle')}</p></div><WalletCards size={18} className="gold" aria-hidden="true"/></div>
 				{data.accountMode==='DEMO'?<div className="account-callout account-mode-notice mt-4" role="status"><span><strong>DEMO deposits and withdrawals are unavailable.</strong><br/>DEMO balances remain virtual and are for trading simulation only. Select a REAL account for eligible funding workflows.</span></div>:<>

@@ -1089,6 +1089,8 @@ test('simulated investment lifecycle and trading work in both account modes',asy
 		const investorId=await page.request.get('/api/profile').then(response=>response.json().then(profile=>profile.id));
 		const realAllocation=await adminPage.request.post('/api/admin/balances',{data:{userId:investorId,accountMode:'REAL',currency:'USD',amount:'1000.00',direction:'CREDIT',category:'ADMIN_ALLOCATION',reason:'Simulated REAL-mode investment and trading test allocation',idempotencyKey:randomUUID()}});
 		expect(realAllocation.status()).toBe(201);
+		const realWalletAfterAllocation=await page.request.get('/api/wallet').then(response=>response.json());
+		expect(realWalletAfterAllocation.adminLedgerReceipts).toContainEqual(expect.objectContaining({reference:(await realAllocation.json()).reference,type:'CREDIT',currency:'USD',amount:'1000'}));
 			const unavailableMethods=await page.request.get('/api/payment-methods').then(response=>response.json());
 				expect(unavailableMethods).toMatchObject({methods:[],fundingStatus:'MANUAL_REVIEW',realFundingAvailable:true,realWithdrawalAvailable:true,manualDepositReviewAvailable:true});
 			const existingFunding=await page.request.get('/api/wallet').then(response=>response.json());
@@ -1619,6 +1621,8 @@ test('wallet manual REAL deposit request does not require an external payment sc
 	await expect(page.getByRole('heading',{name:'Confirm deposit request'})).toBeVisible();
 	await page.getByRole('button',{name:'Confirm request'}).click();
 	await expect(page.getByRole('status').filter({hasText:'submitted for administrator review'})).toBeVisible();
+	await expect(page.getByRole('article',{name:'Deposit pending receipt'})).toBeVisible();
+	await expect(page.getByRole('article',{name:'Deposit pending receipt'}).getByText(/SIMULATED INTERNAL LEDGER RECORD/)).toBeVisible();
 	const wallet=await page.request.get('/api/wallet').then(response=>response.json());
 	expect(wallet.transactions[0]).toMatchObject({type:'DEPOSIT',status:'PENDING_REVIEW',hasReceipt:false,method:'Simulated REAL deposit'});
 });

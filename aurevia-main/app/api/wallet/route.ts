@@ -37,12 +37,23 @@ export async function GET(){
 			db.fundingRequest.findMany({where:{userId:user.id,accountMode:user.accountMode},orderBy:{createdAt:'desc'},take:100,include:{paymentMethod:{select:{id:true,name:true}},user:{select:{name:true,email:true}}}}),
 		]);
 		const balances=await Promise.all(accounts.map(async account=>({currency:account.currency,balance:await balance(db,account.id)})));
+		const accountIds=accounts.map(account=>account.id);
+		const adminLedgerTransactions=accountIds.length?await db.ledgerTransaction.findMany({
+			where:{reference:{startsWith:`ADMIN:${user.accountMode}:${user.id}:`},entries:{some:{accountId:{in:accountIds}}}},
+			orderBy:{createdAt:'desc'},
+			take:100,
+			include:{entries:{where:{accountId:{in:accountIds}},select:{type:true,amount:true,account:{select:{currency:true}}}}},
+		}):[];
+		const adminLedgerReceipts=adminLedgerTransactions.flatMap(transaction=>{
+			const entry=transaction.entries[0];
+			return entry?[{id:transaction.id,reference:transaction.reference,description:transaction.description,type:entry.type,amount:entry.amount,currency:entry.account.currency,createdAt:transaction.createdAt}]:[];
+		});
 		const usdBalance=balances.find(item=>item.currency==='USD')?.balance??null;
 		const approvals=transactions.length?await db.auditLog.findMany({where:{entity:'FUNDING',entityId:{in:transactions.map(transaction=>transaction.id)},action:'FUNDING_APPROVED'},select:{entityId:true,createdAt:true,actor:{select:{name:true,email:true}}},orderBy:{createdAt:'desc'}}):[];
 		const approvalByRequest=new Map();
 		for(const approval of approvals)if(approval.entityId&&!approvalByRequest.has(approval.entityId))approvalByRequest.set(approval.entityId,{reviewedAt:approval.createdAt,reviewedBy:approval.actor});
 		const safeTransactions=transactions.map(({receiptKey,...transaction})=>({...transaction,hasReceipt:!!receiptKey,...(approvalByRequest.get(transaction.id)||{})}));
-		return NextResponse.json(jsonSafe({accountMode:user.accountMode,balance:usdBalance,balances,transactions:safeTransactions}),{headers:{'Cache-Control':'private, no-store'}});
+		return NextResponse.json(jsonSafe({accountMode:user.accountMode,balance:usdBalance,balances,transactions:safeTransactions,adminLedgerReceipts}),{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){
 		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
 		const code=error&&typeof error==='object'&&'code' in error?String(error.code):'';
