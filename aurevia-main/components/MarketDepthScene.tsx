@@ -63,7 +63,7 @@ export default function MarketDepthScene({className=''}:{className?:string}){
 		dpr={[1,1.35]}
 		frameloop={reducedMotion?'demand':'always'}
 		camera={{position:[0,0,10],fov:37}}
-		gl={{alpha:true,antialias:false,preserveDrawingBuffer:true,powerPreference:'low-power'}}
+		gl={{alpha:true,antialias:false,powerPreference:'low-power'}}
 		>
 			<MarketModel/>
 		</Canvas>;

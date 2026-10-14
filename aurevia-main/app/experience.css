@@ -1142,8 +1142,8 @@ a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,su
 .admin-nav-logout{border-color:rgba(199,133,118,.24);color:#d6b4aa}
 .admin-nav-logout:disabled{cursor:wait;opacity:.65}
 .admin-menu-button{display:grid;width:42px;padding:0}
-.admin-anchor-nav{display:flex;gap:5px;margin:15px 0 0;padding:0 0 9px;overflow-x:auto;border-bottom:1px solid var(--a-line);scrollbar-width:thin}
-.admin-anchor-nav a{display:inline-flex;min-height:35px;flex:none;align-items:center;padding:0 10px;border:1px solid transparent;border-radius:3px;color:#aab5ac;font-size:10px;text-decoration:none;white-space:nowrap}
+.admin-anchor-nav{display:flex;min-width:0;flex-wrap:wrap;gap:5px;margin:15px 0 0;padding:0 0 9px;overflow:visible;border-bottom:1px solid var(--a-line)}
+.admin-anchor-nav a{display:inline-flex;min-width:0;min-height:35px;flex:0 1 auto;align-items:center;padding:0 10px;border:1px solid transparent;border-radius:3px;color:#aab5ac;font-size:10px;text-decoration:none;white-space:normal}
 .admin-anchor-nav a:hover,.admin-anchor-nav a:focus-visible{border-color:rgba(197,164,107,.25);background:rgba(197,164,107,.06);color:var(--a-brass-soft)}
 
 @media(min-width:1920px){

@@ -222,8 +222,8 @@ export default function WalletExperience(){
 		<section className="wallet-balance-panel">
 			<div className="wallet-balance-heading"><div className="account-kicker">{translate('availableBalances',{mode:data.accountMode.toLowerCase()})}</div><button type="button" className="wallet-balance-toggle" aria-label={balanceVisible?'Hide balances':'Show balances'} aria-pressed={!balanceVisible} onClick={()=>setBalanceVisible(value=>!value)}>{balanceVisible?<EyeOff size={16}/>:<Eye size={16}/>}<span>{balanceVisible?'Hide':'Show'}</span></button></div>
 			<div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
-				<div className="text-xs uppercase tracking-[0.18em] text-emerald-200/80">Current Real Account balance</div>
-				<div className="mt-2 text-3xl font-semibold text-white">{loading?translate('loading'):!hasWalletData||data.balance===null?'Unavailable':balanceVisible?money(Number(data.balance),'USD'):'•••••• USD'}</div>
+				<div className="text-xs uppercase tracking-[0.18em] text-emerald-200/80">Current {data.accountMode==='REAL'?'Real':'Demo'} Account balance</div>
+				<div className="wallet-balance-value mt-2 text-3xl font-semibold text-white">{loading?translate('loading'):!hasWalletData||data.balance===null?'Unavailable':balanceVisible?money(Number(data.balance),'USD'):'•••••• USD'}</div>
 				<div className="mt-1 text-sm text-slate-300">USD account balance and pending review totals</div>
 			</div>
 			<p className="wallet-demo-note">{hasWalletData?translate('walletDemoNote'):'Balance could not be retrieved. No balance is assumed.'}</p>

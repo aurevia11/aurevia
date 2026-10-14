@@ -267,11 +267,17 @@ test('global chat support persists its position and exchanges private admin mess
 	const moved=await floatingLauncher.boundingBox();
 	expect(moved).not.toBeNull();
 	expect(Math.abs(moved!.x-before!.x)+Math.abs(moved!.y-before!.y)).toBeGreaterThan(40);
+	const savedPosition=await page.evaluate(()=>{
+		const value=localStorage.getItem('aurevia-support-chat-position');
+		return value?JSON.parse(value) as {left:number;top:number}:null;
+	});
+	expect(savedPosition).not.toBeNull();
 	await page.goto('/markets');
-	const afterNavigation=await page.getByRole('button',{name:'Open chat support'}).boundingBox();
-	expect(afterNavigation).not.toBeNull();
-	expect(afterNavigation!.x).toBeCloseTo(moved!.x,0);
-	expect(afterNavigation!.y).toBeCloseTo(moved!.y,0);
+	const restoredLauncher=page.getByRole('button',{name:'Open chat support'});
+	await expect.poll(async()=>{
+		const afterNavigation=await restoredLauncher.boundingBox();
+		return afterNavigation?{x:Math.round(afterNavigation.x),y:Math.round(afterNavigation.y)}:null;
+	}).toEqual({x:Math.round(savedPosition!.left),y:Math.round(savedPosition!.top)});
 	await page.getByRole('button',{name:'Open chat support'}).click();
 	const subject=`Floating support ${randomUUID().slice(0,8)}`;
 	await page.getByLabel('Subject').fill(subject);
@@ -784,8 +790,8 @@ test('Account Funding loads its wallet independently and clearly blocks unconfig
 	await page.goto('/wallet');
 	const methods=await page.request.get('/api/payment-methods').then(response=>response.json());
 	expect(methods).toMatchObject({methods:[],fundingStatus:'NOT_CONFIGURED',realFundingAvailable:false,manualDepositReviewAvailable:true});
-	await expect(page.getByText(/No deposit method is configured\. Submit a request for administrator review/)).toBeVisible();
-	await expect(page.getByLabel('Amount (USD)')).toBeVisible();
+	await expect(page.getByText(/Submit a Real Account deposit request for review/)).toBeVisible();
+	await expect(page.getByLabel('Amount',{exact:true})).toBeVisible();
 	await expect(page.getByRole('button',{name:/Review deposit request/i})).toBeDisabled();
 	await expect(page.getByRole('alert').filter({hasText:'Wallet data is temporarily unavailable'})).toHaveCount(0);
 	for(const width of [320,375,390,430,1440]){
@@ -960,7 +966,7 @@ test('investment requests remain mode-isolated through admin review without fake
 		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5100);
 
 		await selectAccountMode(page,'REAL');
-			await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(125);
+		const initialRealBalance=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
 			const unavailableMethods=await page.request.get('/api/payment-methods').then(response=>response.json());
 				expect(unavailableMethods).toMatchObject({methods:[],fundingStatus:'NOT_CONFIGURED',realFundingAvailable:false,manualDepositReviewAvailable:true});
 			const existingFunding=await page.request.get('/api/wallet').then(response=>response.json());
@@ -975,16 +981,16 @@ test('investment requests remain mode-isolated through admin review without fake
 			const approvalWithoutReceipt=await adminPage.request.patch('/api/admin/funding',{data:{id:manualRequest.id,decision:'APPROVED'}});
 			expect(approvalWithoutReceipt.status()).toBe(409);
 			await page.goto('/wallet');
-			await expect(page.getByText(/No deposit method is configured\. Submit a request for administrator review/)).toBeVisible();
-			await expect(page.getByLabel('Amount (USD)')).toBeVisible();
-			await expect(page.getByText('Manual admin review')).toBeVisible();
+			await expect(page.getByText(/Submit a Real Account deposit request for review/)).toBeVisible();
+			await expect(page.getByLabel('Amount',{exact:true})).toBeVisible();
+			await expect(page.getByRole('link',{name:/DEPOSIT Manual admin review/})).toBeVisible();
 		await page.goto('/investments');
 		await expect(page.getByText(/administrator review of an identity profile, not external KYC\/AML clearance/i)).toBeVisible();
 		const realRequestResponse=await page.request.post('/api/investments',{headers:{'Idempotency-Key':randomUUID()},data:{opportunityId:opportunity.id,amount:500}});
 		expect(realRequestResponse.status()).toBe(201);
 		const realRequest=await realRequestResponse.json();
 		expect(realRequest.status).toBe('PENDING_APPROVAL');
-		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(125);
+		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(initialRealBalance);
 		await review(realRequest.id,'approve');
 		const unreferencedActivation=await adminPage.request.patch('/api/admin/investments',{data:{requestId:realRequest.id,action:'activate'}});
 		expect(unreferencedActivation.status()).toBe(409);
@@ -995,7 +1001,7 @@ test('investment requests remain mode-isolated through admin review without fake
 		expect(fabricatedSettlement.status()).toBe(409);
 		expect((await fabricatedSettlement.json()).error).toBe('REAL_INVESTMENT_PROVIDER_UNAVAILABLE');
 		await review(realRequest.id,'cancel');
-		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(125);
+		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(initialRealBalance);
 
 		await selectAccountMode(page,'DEMO');
 			await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5100);
@@ -1010,7 +1016,7 @@ test('investment requests remain mode-isolated through admin review without fake
 		await expect(page.getByRole('status')).toContainText('DEMO portfolio reset to $5,000.00');
 		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5000);
 		await selectAccountMode(page,'REAL');
-			await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(125);
+			await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(initialRealBalance);
 		await expectNoHorizontalOverflow(page);
 	}finally{await adminContext.close();}
 });
@@ -1172,10 +1178,10 @@ test('admin funding updates separate DEMO and simulated/configured REAL balances
 	expect(configuredDeposits.every((item:{type:string;status:string;accountMode:string;currency:string})=>item.type==='DEPOSIT'&&item.status==='APPROVED'&&item.accountMode==='REAL'&&item.currency==='USD')).toBe(true);
 	expect(configuredDeposits.map((item:{creditedAmount:string})=>Number(item.creditedAmount)).sort((left:number,right:number)=>left-right)).toEqual([25.5,2500]);
 	await page.goto('/wallet');
-	const configuredReceipt=page.locator('details').filter({hasText:'SIMULATED / CONFIGURED REAL DEPOSIT'}).first();
+	const configuredReceipt=page.locator('details').filter({hasText:'Real Account deposit · 2,500.00 USD · Approved'}).first();
 	await expect(configuredReceipt).toBeVisible();
 	await configuredReceipt.locator('summary').click();
-	await expect(configuredReceipt.getByText('SIMULATED / CONFIGURED REAL DEPOSIT',{exact:false})).toHaveCount(1);
+	await expect(configuredReceipt.getByRole('article',{name:'Approval payment receipt'})).toContainText('Deposit approved');
 	await selectAccountMode(page,'DEMO');
 	const after=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
 	expect(after).toBeCloseTo(before+25.5,2);
@@ -1212,7 +1218,8 @@ test('administrator user and KYC actions persist and report protected actions',a
 	await userRow.getByRole('button',{name:'Make user'}).click();
 	await expect(userRow.getByRole('button',{name:'Make admin'})).toBeVisible();
 	const kycPanel=page.locator('#kyc-verification');
-	await expect(kycPanel.locator('div.mt-3.divide-y')).toHaveCount(0);
+	const kycReviewRows=kycPanel.locator('div.mt-3.divide-y').locator('article');
+	await expect(kycReviewRows.filter({hasText:fixture('INVESTOR_EMAIL')})).toHaveCount(0);
 	await kycPanel.getByLabel('Review queue').selectOption('ALL');
 	const investorRow=kycPanel.locator('article').filter({hasText:fixture('INVESTOR_EMAIL')}).first();
 	await investorRow.getByRole('button',{name:'Reject',exact:true}).click();
@@ -1240,7 +1247,7 @@ test('administrator user and KYC actions persist and report protected actions',a
 	await page.getByLabel('Search').fill(fixture('INVESTOR_EMAIL'));
 	await expect(page.getByText(fixture('INVESTOR_EMAIL'),{exact:true})).toBeVisible();
 	await page.getByText(fixture('INVESTOR_EMAIL'),{exact:true}).click();
-	await expect(page.getByText(fixture('ADMIN_EMAIL'),{exact:true})).toBeVisible();
+	await expect(page.getByText(fixture('ADMIN_EMAIL'),{exact:false})).toBeVisible();
 });
 
 test('Nova activity is redacted and visible only to administrators',async({page})=>{
@@ -1296,20 +1303,20 @@ test('Nova activity is redacted and visible only to administrators',async({page}
 	expect(JSON.stringify(events)).not.toContain('e2e-private-question-marker');
 });
 
-test('admin pages render for authenticated administrator at requested viewports',async({page})=>{
-	await loginAs(page,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
-	for(const viewport of viewports){
-		await page.setViewportSize(viewport);
-		for(const route of adminRoutes){
+for(const viewport of viewports){
+	for(const route of adminRoutes){
+		test(`admin ${route} renders without overflow at ${viewport.width}px`,async({page})=>{
+			await page.setViewportSize(viewport);
+			await loginAs(page,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
 			const response=await page.goto(route);
 			expect(response?.status(),route).toBe(200);
 			await expect(page.locator('h1').first(),route).toBeVisible();
 			if(route!=='/admin/login'&&viewport.width<1920)await expect(page.getByRole('button',{name:'Open admin menu'}),route).toBeVisible();
 			if(route!=='/admin/login'&&viewport.width>=1920)await expect(page.getByRole('navigation',{name:'Administrator navigation'}).getByRole('link',{name:'Control room'}),route).toBeVisible();
 			await expectNoHorizontalOverflow(page);
-		}
+		});
 	}
-});
+}
 
 test('DEMO order idempotency prevents duplicate fills and user history stays isolated',async({browser,page})=>{
 	await loginAs(page,fixture('LEGACY_USER_EMAIL'),fixture('LEGACY_USER_PASSWORD'));

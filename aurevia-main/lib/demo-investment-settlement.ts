@@ -10,7 +10,10 @@ export async function settleMaturedDemoInvestments(now=new Date()){
 	const matured=await db.investmentRequest.findMany({where:{accountMode:AccountMode.DEMO,status:InvestmentStatus.ACTIVE,maturesAt:{lte:now}},select:{id:true},orderBy:{maturesAt:'asc'},take:batchSize});
 	let settledCount=0;
 	for(const {id} of matured){
-		const settled=await db.$transaction(async tx=>{
+		let settled=false;
+		for(let attempt=0;attempt<3;attempt++){
+			try{
+				settled=await db.$transaction(async tx=>{
 			const current=await tx.investmentRequest.findUnique({where:{id},include:{opportunity:{select:{title:true}}}});
 			if(!current||current.accountMode!==AccountMode.DEMO||current.status!==InvestmentStatus.ACTIVE||!current.maturesAt||current.maturesAt>now)return false;
 			const payout=simulatedInvestmentPayout(current.amount,current.targetReturnPercent);
@@ -32,7 +35,14 @@ export async function settleMaturedDemoInvestments(now=new Date()){
 			await tx.auditLog.create({data:{actorId:null,action:'DEMO_INVESTMENT_AUTO_SETTLED',entity:'INVESTMENT',entityId:current.id,metadata:{accountMode:AccountMode.DEMO,principal:current.amount.toString(),targetReturnPercent:current.targetReturnPercent?.toString()??null,simulatedPayout:payout.toString(),settlementReference}}});
 			await createNotification(tx,{userId:current.userId,type:NotificationType.SYSTEM,title:'DEMO investment matured',message:`Your DEMO investment matured and a simulated payout of ${payout.toFixed(2)} USD was credited using its configured target return. This is a virtual result, not real investment profit.`,dedupeKey:`investment:${current.id}:auto-settled`,relatedEntity:'INVESTMENT',relatedId:current.id,actionUrl:'/investments'});
 			return true;
-		},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+				},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+				break;
+			}catch(error){
+				const retryable=error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2034';
+				if(!retryable||attempt===2)throw error;
+				await new Promise(resolve=>setTimeout(resolve,25*(attempt+1)));
+			}
+		}
 		if(settled)settledCount++;
 	}
 	return settledCount;

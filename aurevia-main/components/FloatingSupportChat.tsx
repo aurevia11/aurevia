@@ -77,7 +77,14 @@ export default function FloatingSupportChat(){
 			if(dragged.current)setPosition(clampPosition({left:active.left+event.clientX-active.startX,top:active.top+event.clientY-active.startY},open));
 		}
 		function endDrag(event:PointerEvent){
-			if(drag.current?.pointerId===event.pointerId)drag.current=null;
+			const active=drag.current;
+			if(active?.pointerId!==event.pointerId)return;
+			if(dragged.current){
+				const next=clampPosition({left:active.left+event.clientX-active.startX,top:active.top+event.clientY-active.startY},open);
+				setPosition(next);
+				try{localStorage.setItem(positionKey,JSON.stringify(next))}catch{}
+			}
+			drag.current=null;
 		}
 		window.addEventListener('pointermove',moveDrag);
 		window.addEventListener('pointerup',endDrag);

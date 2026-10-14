@@ -49,6 +49,7 @@ export default defineConfig({
 		baseURL,
 		...devices['Desktop Chrome'],
 		viewport:{width:1440,height:900},
+		reducedMotion:'reduce',
 		headless:true,
 		trace:'off',
 		screenshot:'only-on-failure',
