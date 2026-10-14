@@ -63,7 +63,7 @@ The `/markets` page uses the server-only `FINNHUB_API_KEY` when configured and f
 
 ## Important scope boundary
 
-DEMO funding and market activity are simulated. REAL balances are simulated/configured internal ledger balances only. Users may request a deposit amount up to the platform limit and upload payment evidence for administrator review. A REAL deposit cannot be approved until private evidence is attached; approval credits exactly the requested amount to the internal ledger and generates an application receipt showing its review status. Screenshots are supporting evidence, not independent payment verification. No payment processor, bank/card transfer, custody, or real-money movement is involved. Per-user deposit and withdrawal controls are enforced by the wallet API. REAL withdrawals and broker execution remain unavailable until their provider integrations, reconciliation, compliance, and jurisdiction-specific requirements are implemented and enabled. `BANK_SIM`, `CRYPTO_SIM`, and `INTERNAL_TRANSFER` are not external financial integrations.
+DEMO funding and market activity are simulated. REAL balances are simulated/configured internal ledger balances only. Every user-submitted deposit requires a PNG, JPEG, or WebP payment screenshot, stored privately with the funding request and queued for administrator review. Payment methods, including a configured Bitcoin address, are persisted in the database; Bitcoin methods display a locally generated QR code from that address. Admin approval is required before any deposit is credited, and the application generates pending and approval receipts. Screenshots are supporting evidence, not independent payment verification. No payment processor, bank/card transfer, custody, or real-money movement is involved. Per-user deposit and withdrawal controls are enforced by the wallet API. REAL withdrawals and broker execution remain unavailable until their provider integrations, reconciliation, compliance, and jurisdiction-specific requirements are implemented and enabled. `BANK_SIM`, `CRYPTO_SIM`, and `INTERNAL_TRANSFER` are not external financial integrations.
 
 Two-factor authentication is currently disabled. The legacy database flag is not treated as protection, the profile API reports it as unavailable, and attempts to enable it are rejected until enrollment, login challenges, recovery, and reauthentication are implemented.
 
@@ -218,9 +218,9 @@ Submit the KYC form and upload an identity document to private storage. Admin re
 
 ### 5. Funding
 
-Create a deposit request in `/wallet`. Admin approves it. The customer's USD ledger balance increases through a double-entry transaction.
+Configure an enabled payment method in `/admin/payments` (store a Bitcoin receiving address in its destination field for a BTC method). Submit a deposit form in `/wallet` with a screenshot; the request and private evidence appear in the administrator funding queue. Admin reviews the evidence and approves or rejects the request. Only approval posts the credited amount through a double-entry ledger transaction, and the user can download generated pending and approval receipts.
 
-Create a withdrawal request. Approval checks available ledger balance inside a serializable database transaction before posting the debit.
+Withdrawal requests reserve available balance and require administrator review. Approval checks eligibility and available ledger balance inside a serializable database transaction and is recorded in the audit log; REAL external payout and settlement remain disabled until a payout provider is connected.
 
 ### 6. Trading
 

@@ -30,6 +30,10 @@ function fixture(name:string){
 	return value;
 }
 
+function depositPostOptions(idempotencyKey:string,payload:Record<string,unknown>){
+	return {headers:{'Idempotency-Key':idempotencyKey},multipart:{payload:JSON.stringify(payload),evidence:{name:'payment.png',mimeType:'image/png',buffer:PNG.sync.write(new PNG({width:1,height:1}))}}};
+}
+
 async function typeInto(page:import('@playwright/test').Page,field:import('@playwright/test').Locator,value:string){
 	await field.click();
 	await expect.poll(()=>field.evaluate(element=>document.activeElement===element)).toBe(true);
@@ -970,16 +974,14 @@ test('investment requests remain mode-isolated through admin review without fake
 			const unavailableMethods=await page.request.get('/api/payment-methods').then(response=>response.json());
 				expect(unavailableMethods).toMatchObject({methods:[],fundingStatus:'NOT_CONFIGURED',realFundingAvailable:false,manualDepositReviewAvailable:true});
 			const existingFunding=await page.request.get('/api/wallet').then(response=>response.json());
-			const blockedFunding=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'DEPOSIT',paymentMethodId:'not-configured',amount:10,currency:'USD',transactionReference:`E2E-${randomUUID()}`}});
+			const blockedFunding=await page.request.post('/api/wallet',depositPostOptions(randomUUID(),{type:'DEPOSIT',paymentMethodId:'not-configured',amount:10,currency:'USD',transactionReference:`E2E-${randomUUID()}`}));
 			expect(blockedFunding.status()).toBe(400);
 			expect((await blockedFunding.json()).error).toBe('payment method unavailable');
 			expect(await page.request.get('/api/wallet').then(async response=>(await response.json()).transactions.length)).toBe(existingFunding.transactions.length);
-			const manualRequestResponse=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'DEPOSIT',amount:10,currency:'USD',transactionReference:`MANUAL-${randomUUID()}`}});
+			const manualRequestResponse=await page.request.post('/api/wallet',depositPostOptions(randomUUID(),{type:'DEPOSIT',amount:10,currency:'USD',transactionReference:`MANUAL-${randomUUID()}`}));
 			expect(manualRequestResponse.status()).toBe(201);
 			const manualRequest=await manualRequestResponse.json();
-			expect(manualRequest).toMatchObject({method:'Manual admin review',paymentMethodId:null,status:'PENDING_REVIEW',accountMode:'REAL'});
-			const approvalWithoutReceipt=await adminPage.request.patch('/api/admin/funding',{data:{id:manualRequest.id,decision:'APPROVED'}});
-			expect(approvalWithoutReceipt.status()).toBe(409);
+			expect(manualRequest).toMatchObject({method:'Manual admin review',paymentMethodId:null,status:'PENDING_REVIEW',accountMode:'REAL',hasReceipt:true});
 			await page.goto('/wallet');
 			await expect(page.getByText(/Submit a Real Account deposit request for review/)).toBeVisible();
 			await expect(page.getByLabel('Amount',{exact:true})).toBeVisible();
@@ -1311,8 +1313,8 @@ for(const viewport of viewports){
 			const response=await page.goto(route);
 			expect(response?.status(),route).toBe(200);
 			await expect(page.locator('h1').first(),route).toBeVisible();
-			if(route!=='/admin/login'&&viewport.width<1920)await expect(page.getByRole('button',{name:'Open admin menu'}),route).toBeVisible();
-			if(route!=='/admin/login'&&viewport.width>=1920)await expect(page.getByRole('navigation',{name:'Administrator navigation'}).getByRole('link',{name:'Control room'}),route).toBeVisible();
+			if(route!=='/admin/login'&&viewport.width<1280)await expect(page.getByRole('button',{name:'Open admin menu'}),route).toBeVisible();
+			if(route!=='/admin/login'&&viewport.width>=1280)await expect(page.getByRole('navigation',{name:'Administrator navigation'}).getByRole('link',{name:'Control room'}),route).toBeVisible();
 			await expectNoHorizontalOverflow(page);
 		});
 	}
@@ -1386,21 +1388,36 @@ test('wallet deposits remain pending and idempotent while withdrawals require a 
 
 	const depositKey=randomUUID();
 	const depositPayload={type:'DEPOSIT',paymentMethodId:method.id,amount:100,currency:'USD'};
-	const deposit=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':depositKey},data:depositPayload});
+	const missingEvidence=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:depositPayload});
+	expect(missingEvidence.status()).toBe(400);
+	expect((await missingEvidence.json()).error).toContain('Attach a payment screenshot');
+	const deposit=await page.request.post('/api/wallet',depositPostOptions(depositKey,depositPayload));
 	expect(deposit.status()).toBe(201);
 	const depositRequest=await deposit.json();
 	expect(depositRequest.status).toBe('PENDING_REVIEW');
 	expect(depositRequest.accountMode).toBe('DEMO');
-	const replay=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':depositKey},data:depositPayload});
+	expect(depositRequest.hasReceipt).toBe(true);
+	const replay=await page.request.post('/api/wallet',depositPostOptions(depositKey,depositPayload));
 	expect(replay.status()).toBe(200);
 	expect((await replay.json()).id).toBe(depositRequest.id);
+	const adminContext=await browser.newContext();
+	try{
+		const adminPage=await adminContext.newPage();
+		await loginAs(adminPage,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
+		const queue=await adminPage.request.get('/api/admin/funding').then(response=>response.json());
+		expect(queue.find((item:{id:string})=>item.id===depositRequest.id)).toMatchObject({hasReceipt:true,status:'PENDING_REVIEW'});
+		const signedReceipt=await adminPage.request.get(`/api/admin/funding/${depositRequest.id}/receipt`).then(response=>response.json());
+		const evidence=await adminPage.request.get(signedReceipt.url);
+		expect(evidence.ok()).toBe(true);
+		expect(evidence.headers()['content-type']).toContain('image/png');
+	}finally{await adminContext.close();}
 	expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(startingBalance);
 
 	const withdrawal=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'WITHDRAWAL',paymentMethodId:method.id,amount:10,currency:'USD'}});
 	expect(withdrawal.status()).toBe(403);
 	expect((await withdrawal.json()).error).toBe('first trade required');
 	expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(startingBalance);
-	const aboveMethodMaximum=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'DEPOSIT',paymentMethodId:method.id,amount:15000,currency:'USD'}});
+	const aboveMethodMaximum=await page.request.post('/api/wallet',depositPostOptions(randomUUID(),{type:'DEPOSIT',paymentMethodId:method.id,amount:15000,currency:'USD'}));
 	expect(aboveMethodMaximum.status()).toBe(201);
 	expect((await aboveMethodMaximum.json()).status).toBe('PENDING_REVIEW');
 	expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(startingBalance);
@@ -1412,6 +1429,52 @@ test('wallet deposits remain pending and idempotent while withdrawals require a 
 		const otherWallet=await otherPage.request.get('/api/wallet').then(response=>response.json());
 		expect(otherWallet.transactions).toHaveLength(0);
 	}finally{await otherContext.close();}
+});
+
+test('wallet deposit form submits a private screenshot with the review request',async({page})=>{
+	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
+	await selectAccountMode(page,'DEMO');
+	await page.goto('/wallet');
+	await expect(page.getByLabel('Payment method')).toBeEnabled();
+	await page.getByLabel('Amount',{exact:true}).fill('35');
+	await page.getByLabel('Payment screenshot evidence').setInputFiles({name:'payment.png',mimeType:'image/png',buffer:PNG.sync.write(new PNG({width:1,height:1}))});
+	await page.getByRole('button',{name:'Review deposit request'}).click();
+	await expect(page.getByRole('heading',{name:'Confirm deposit request'})).toBeVisible();
+	await page.getByRole('button',{name:'Confirm request'}).click();
+	await expect(page.getByRole('status').filter({hasText:'submitted for administrator review'})).toBeVisible();
+	const wallet=await page.request.get('/api/wallet').then(response=>response.json());
+	expect(wallet.transactions[0]).toMatchObject({type:'DEPOSIT',status:'PENDING_REVIEW',hasReceipt:true});
+});
+
+test('configured Bitcoin methods show their address and a locally generated QR code',async({browser,page})=>{
+	const adminContext=await browser.newContext();
+	let methodId='';
+	let investorLoggedIn=false;
+	try{
+		const adminPage=await adminContext.newPage();
+		await loginAs(adminPage,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
+		const created=await adminPage.request.post('/api/admin/payment-methods',{data:{name:`E2E Bitcoin ${randomUUID()}`,enabled:true,demoOnly:false,depositEnabled:true,withdrawalEnabled:false,requiresNetwork:true,currencies:['BTC'],destination:'bc1qexampleaddress',instructions:'Use the Bitcoin network.',minimumAmount:0,maximumAmount:null,processingNotes:null,displayOrder:999}});
+		expect(created.ok()).toBe(true);
+		methodId=(await created.json()).id;
+		await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
+		investorLoggedIn=true;
+		await selectAccountMode(page,'REAL');
+		await page.goto('/wallet');
+		await expect(page.getByText('Configured BTC receiving address')).toBeVisible();
+		await expect(page.getByText('bc1qexampleaddress')).toBeVisible();
+		const qr=page.getByRole('img',{name:'QR code for the configured Bitcoin payment address'});
+		await expect(qr).toBeVisible();
+		expect(await qr.getAttribute('src')).toMatch(/^data:image\/png;base64,/);
+	}finally{
+		if(methodId){
+			const adminPage=await adminContext.newPage();
+			await loginAs(adminPage,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
+			await adminPage.request.patch('/api/admin/payment-methods',{data:{id:methodId,name:`E2E Bitcoin disabled ${randomUUID()}`,enabled:false,demoOnly:false,depositEnabled:true,withdrawalEnabled:false,requiresNetwork:true,currencies:['BTC'],destination:'bc1qexampleaddress',instructions:'Use the Bitcoin network.',minimumAmount:0,maximumAmount:null,processingNotes:null,displayOrder:999}});
+			await adminPage.close();
+		}
+		if(investorLoggedIn)await selectAccountMode(page,'DEMO');
+		await adminContext.close();
+	}
 });
 
 test('admin funding permissions gate requests and approved deposits credit the user ledger',async({browser,page})=>{
@@ -1440,7 +1503,7 @@ test('admin funding permissions gate requests and approved deposits credit the u
 		expect((await blockedWithdrawal.json()).error).toBe('withdrawal disabled');
 		const enabled=await adminPage.request.patch('/api/admin/users',{data:{userId:userProfile.id,depositEnabled:true,withdrawalEnabled:true}});
 		expect(enabled.ok()).toBeTruthy();
-		const deposit=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'DEPOSIT',paymentMethodId:method.id,amount:25,currency:'USD'}});
+		const deposit=await page.request.post('/api/wallet',depositPostOptions(randomUUID(),{type:'DEPOSIT',paymentMethodId:method.id,amount:25,currency:'USD'}));
 		expect(deposit.status()).toBe(201);
 		const request=await deposit.json();
 		expect(request.status).toBe('PENDING_REVIEW');
@@ -1456,7 +1519,7 @@ test('approved deposit receipts use the credited amount and reviewer audit',asyn
 	await selectAccountMode(page,'DEMO');
 	const startingBalance=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
 	const methods=await page.request.get('/api/payment-methods').then(async response=>(await response.json()).methods);
-	const deposit=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'DEPOSIT',paymentMethodId:methods[0].id,amount:100,currency:'USD',transactionReference:`E2E-${randomUUID()}`}});
+	const deposit=await page.request.post('/api/wallet',depositPostOptions(randomUUID(),{type:'DEPOSIT',paymentMethodId:methods[0].id,amount:100,currency:'USD',transactionReference:`E2E-${randomUUID()}`}));
 	expect(deposit.status()).toBe(201);
 	const request=await deposit.json();
 	await logout(page);

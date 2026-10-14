@@ -2,11 +2,13 @@
 
 import {FormEvent,useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import Link from 'next/link';
+import Image from 'next/image';
 import {useSession} from 'next-auth/react';
-import {ArrowDownLeft,ArrowUpRight,Check,Copy,Eye,EyeOff,RefreshCw,WalletCards} from 'lucide-react';
+import {ArrowDownLeft,ArrowUpRight,Check,Copy,Eye,EyeOff,QrCode,RefreshCw,WalletCards} from 'lucide-react';
 import Nav from '@/components/Nav';
 import ReceiptGenerator from '@/components/ReceiptGenerator';
 import {useLocale} from '@/lib/i18n-context';
+import QRCode from 'qrcode';
 
 type PaymentMethod={id:string;name:string;currencies:string[];destination:string|null;instructions:string|null;minimumAmount:string|number;maximumAmount:string|number|null;depositEnabled:boolean;withdrawalEnabled:boolean;requiresNetwork:boolean;demoOnly:boolean};
 type FundingRecord={id:string;type:'DEPOSIT'|'WITHDRAWAL';method:string;amount:number|string;creditedAmount?:number|string|null;currency:string;status:string;accountMode:'DEMO'|'REAL';createdAt:string;reviewedAt?:string|null;reviewedBy?:{name:string|null;email:string}|null;transactionReference?:string|null;adminNote?:string|null;hasReceipt?:boolean;user?:{name:string|null;email:string}};
@@ -85,9 +87,13 @@ export default function WalletExperience(){
 	const [receiptFiles,setReceiptFiles]=useState<Record<string,File|undefined>>({});
 	const [receiptBusy,setReceiptBusy]=useState('');
 	const [submittedReceipt,setSubmittedReceipt]=useState<FundingRecord|null>(null);
+	const [proofFile,setProofFile]=useState<File|null>(null);
+	const [bitcoinQr,setBitcoinQr]=useState('');
+	const [bitcoinQrError,setBitcoinQrError]=useState('');
 
 	const availableMethods=useMemo(()=>methods.filter(method=>type==='DEPOSIT'?method.depositEnabled:method.withdrawalEnabled&&(data.accountMode==='DEMO'||realWithdrawalAvailable)),[methods,type,data.accountMode,realWithdrawalAvailable]);
 	const selectedMethod=availableMethods.find(method=>method.id===methodId);
+	const bitcoinMethod=selectedMethod?selectedMethod.currencies.some(item=>item.toUpperCase()==='BTC')||/\bbitcoin\b|\bbtc\b/i.test(selectedMethod.name):false;
 	const manualRealDeposit=type==='DEPOSIT'&&data.accountMode==='REAL'&&manualDepositReviewAvailable&&availableMethods.length===0;
 	const supportedCurrencies=useMemo(()=>selectedMethod?.currencies||[],[selectedMethod]);
 	const currentBalanceRecord=data.balances.find(item=>item.currency===currency);
@@ -153,11 +159,27 @@ export default function WalletExperience(){
 	},[availableMethods,methodId]);
 	useEffect(()=>{if(supportedCurrencies.length&&!supportedCurrencies.includes(currency))setCurrency(supportedCurrencies[0])},[supportedCurrencies,currency]);
 	useEffect(()=>{if(manualRealDeposit&&currency!=='USD')setCurrency('USD')},[manualRealDeposit,currency]);
+	useEffect(()=>{
+		if(!selectedMethod?.destination||!bitcoinMethod||type!=='DEPOSIT'){
+			setBitcoinQr('');setBitcoinQrError('');
+			return;
+		}
+		let current=true;
+		setBitcoinQr('');setBitcoinQrError('');
+		const destination=/^bitcoin:/i.test(selectedMethod.destination)?selectedMethod.destination:`bitcoin:${selectedMethod.destination}`;
+		void QRCode.toDataURL(destination,{width:192,margin:1,color:{dark:'#102017',light:'#ffffff'}}).then(value=>{
+			if(current)setBitcoinQr(value);
+		}).catch(()=>{
+			if(current)setBitcoinQrError('Unable to generate the Bitcoin payment QR code.');
+		});
+		return ()=>{current=false};
+	},[selectedMethod?.destination,bitcoinMethod,type]);
 	useEffect(()=>()=>{if(copiedTimer.current!==null)window.clearTimeout(copiedTimer.current)},[]);
 
 	async function submit(event:FormEvent<HTMLFormElement>){
 		event.preventDefault();
 		if(!selectedMethod&&!manualRealDeposit)return;
+		if(type==='DEPOSIT'&&!proofFile){setError(translate('paymentScreenshotRequired'));return;}
 		const minimumAmount=selectedMethod&&selectedMethod.minimumAmount!==null&&selectedMethod.minimumAmount!==undefined?Number(selectedMethod.minimumAmount):0.01;
 		const minAmount=type==='DEPOSIT'?minimumAmount:undefined;
 		const maxAmount=type==='WITHDRAWAL'?(selectedMethod&&selectedMethod.maximumAmount!==null&&selectedMethod.maximumAmount!==undefined?Number(selectedMethod.maximumAmount):undefined):undefined;
@@ -168,17 +190,29 @@ export default function WalletExperience(){
 
 	async function confirmSubmit(){
 		if((!selectedMethod&&!manualRealDeposit)||submitting)return;
+		if(type==='DEPOSIT'&&!proofFile){setError(translate('paymentScreenshotRequired'));return;}
 		setSubmitting(true);setError('');
 		const payload={type,...(selectedMethod?{paymentMethodId:selectedMethod.id}:{}),amount:Number(amount),currency,transactionReference:transactionReference||undefined,referenceInfo:referenceInfo||undefined,senderInfo:senderInfo||undefined,destinationInfo:destinationInfo||undefined,beneficiaryInfo:beneficiaryInfo||undefined,network:network||undefined,note:note||undefined};
 		const fingerprint=JSON.stringify(payload);
 		const key=idempotencyKey&&keyFingerprint===fingerprint?idempotencyKey:window.crypto.randomUUID();setIdempotencyKey(key);setKeyFingerprint(fingerprint);
 		try{
-			const response=await fetch('/api/wallet',{method:'POST',headers:{'content-type':'application/json','Idempotency-Key':key},body:JSON.stringify(payload)});
+			const headers:HeadersInit={'Idempotency-Key':key};
+			let body:BodyInit;
+			if(type==='DEPOSIT'){
+				const form=new FormData();
+				form.append('payload',JSON.stringify(payload));
+				form.append('evidence',proofFile!);
+				body=form;
+			}else{
+				headers['content-type']='application/json';
+				body=JSON.stringify(payload);
+			}
+			const response=await fetch('/api/wallet',{method:'POST',headers,body});
 			const result=await response.json();
 			if(!response.ok)throw new Error(result.error||'Unable to submit this request.');
 			if(type==='DEPOSIT')setSubmittedReceipt(result as FundingRecord);
 			setMessage(response.status===200?`Request ${result.id} already exists with status ${String(result.status).replaceAll('_',' ')}. No new request was created.`:`Request ${result.id} submitted for administrator review. The ledger has not been posted.`);
-			setAmount('');setTransactionReference('');setReferenceInfo('');setSenderInfo('');setDestinationInfo('');setBeneficiaryInfo('');setNetwork('');setNote('');setIdempotencyKey('');setKeyFingerprint('');setConfirming(false);
+			setAmount('');setTransactionReference('');setReferenceInfo('');setSenderInfo('');setDestinationInfo('');setBeneficiaryInfo('');setNetwork('');setNote('');setProofFile(null);setIdempotencyKey('');setKeyFingerprint('');setConfirming(false);
 			await load();
 		}catch(exception){setError(exception instanceof Error?exception.message:'Unable to submit this request.');}
 		finally{setSubmitting(false);}
@@ -250,11 +284,12 @@ export default function WalletExperience(){
 						{manualRealDeposit?<label className="account-label">{translate('currency')}<input className="input" value="USD" readOnly/></label>:<label className="account-label">{translate('currency')}<select className="input" required value={currency} onChange={event=>setCurrency(event.target.value)}>{supportedCurrencies.map(item=><option key={item} value={item}>{item}</option>)}</select></label>}
 						<label className="account-label">{translate('amount',{currency})}<input className="input" type="number" min={type==='DEPOSIT'?'0.00000001':selectedMethod?.minimumAmount||'0.00000001'} max={type==='DEPOSIT'?undefined:selectedMethod?.maximumAmount||undefined} step="any" inputMode="decimal" required value={amount} onChange={event=>setAmount(event.target.value)} placeholder="0.00"/></label>
 						{type==='DEPOSIT'?<>
-							{(selectedMethod?.destination||selectedMethod?.instructions)&&<div className="account-callout deposit-instructions"><div><strong>{translate('administratorConfiguredPaymentInstructions')}</strong>{selectedMethod.destination&&<p className="mt-2 break-all font-mono text-xs">{selectedMethod.destination}</p>}{selectedMethod.instructions&&<p className="mt-2 text-sm">{selectedMethod.instructions}</p>}</div>{selectedMethod.destination&&<button type="button" className="icon-action" aria-label={translate('copyPaymentDestination')} onClick={()=>void copyDestination()}>{copied?<Check size={15}/>:<Copy size={15}/>}</button>}</div>}
+							{(selectedMethod?.destination||selectedMethod?.instructions)&&<div className="account-callout deposit-instructions"><div className="min-w-0"><strong>{bitcoinMethod?translate('bitcoinReceivingAddress'):translate('administratorConfiguredPaymentInstructions')}</strong>{selectedMethod.destination&&<p className="mt-2 break-all font-mono text-xs">{selectedMethod.destination}</p>}{selectedMethod.instructions&&<p className="mt-2 text-sm">{selectedMethod.instructions}</p>}{bitcoinQr&&<div className="mt-3 grid w-fit gap-2 rounded-lg bg-white p-3 text-slate-900"><Image unoptimized src={bitcoinQr} alt={translate('bitcoinQrAlt')} width={192} height={192}/><span className="flex items-center gap-2 text-xs font-semibold"><QrCode size={14}/>{translate('scanWithBitcoinWallet')}</span></div>}{bitcoinQrError&&<p className="mt-2 text-sm text-loss" role="alert">{translate('bitcoinQrError')}</p>}</div>{selectedMethod.destination&&<button type="button" className="icon-action" aria-label={translate('copyPaymentDestination')} onClick={()=>void copyDestination()}>{copied?<Check size={15}/>:<Copy size={15}/>}</button>}</div>}
 							<label className="account-label">{data.accountMode==='REAL'?'Internal reference (optional)':translate('externalReference')}<input className="input" maxLength={180} value={transactionReference} onChange={event=>setTransactionReference(event.target.value)} placeholder={data.accountMode==='REAL'?'Optional note/reference for admin review':translate('paymentProviderReference')}/></label>
 							<label className="account-label">{translate('senderReference')}<input className="input" maxLength={500} value={referenceInfo} onChange={event=>setReferenceInfo(event.target.value)} placeholder={translate('providerReference')}/></label>
 							<label className="account-label">{translate('senderInformation')}<input className="input" maxLength={300} value={senderInfo} onChange={event=>setSenderInfo(event.target.value)} placeholder={translate('nameOrAccountDetails')}/></label>
-							<div className="account-callout"><span>{data.accountMode==='REAL'?'Submit the request, then upload your payment evidence from Transaction History. An administrator reviews the request and posts the ledger credit only after approval.':translate('paymentProofUnavailable')}</span></div>
+							<label className="account-label">{translate('paymentScreenshotEvidence')}<input className="input" type="file" accept="image/jpeg,image/png,image/webp" required aria-label={translate('paymentScreenshotEvidence')} onChange={event=>setProofFile(event.target.files?.[0]||null)}/><small className="muted">{translate('screenshotEvidenceHint')}</small></label>
+							<div className="account-callout"><span>{translate('depositEvidenceReviewNotice')}</span></div>
 						</>:<>
 							{selectedMethod!.demoOnly?<div className="account-callout"><span>{translate('demoWithdrawalNotice')}</span></div>:<label className="account-label">{translate('destinationAddress')}<input className="input" required maxLength={500} value={destinationInfo} onChange={event=>setDestinationInfo(event.target.value)} placeholder={translate('payoutDestinationPlaceholder')}/></label>}
 							{selectedMethod!.requiresNetwork&&!selectedMethod!.demoOnly&&<label className="account-label">{translate('network')}<input className="input" required maxLength={80} value={network} onChange={event=>setNetwork(event.target.value)} placeholder={translate('destinationNetworkPlaceholder')}/></label>}

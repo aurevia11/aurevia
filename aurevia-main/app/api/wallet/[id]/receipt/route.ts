@@ -4,20 +4,10 @@ import {requireUser} from '@/lib/auth';
 import {db} from '@/lib/db';
 import {createNotification,notifyActiveAdmins} from '@/lib/notifications';
 import {sendSupportEmail} from '@/lib/email';
-import {createPrivateObjectKey,createPrivateSignedUrl,deletePrivateObject,hasMatchingFileExtension,PrivateStorageError,uploadPrivateObject} from '@/lib/private-storage';
+import {FundingEvidenceError,maxFundingEvidenceBytes,validateFundingEvidence} from '@/lib/funding-evidence';
+import {createPrivateObjectKey,createPrivateSignedUrl,deletePrivateObject,PrivateStorageError,uploadPrivateObject} from '@/lib/private-storage';
 
-const maxUploadBytes=5*1024*1024;
 const reviewableStatuses=[FundingStatus.PENDING,FundingStatus.PENDING_REVIEW,FundingStatus.PROCESSING];
-const fileTypes={pdf:{mime:'application/pdf',extension:'pdf'},png:{mime:'image/png',extension:'png'},jpeg:{mime:'image/jpeg',extension:'jpg'},webp:{mime:'image/webp',extension:'webp'}} as const;
-type ReceiptFormat=keyof typeof fileTypes;
-
-function detectFormat(bytes:Buffer):ReceiptFormat|null{
-	if(bytes.subarray(0,5).toString()==='%PDF-')return 'pdf';
-	if(bytes.length>=8&&bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])))return 'png';
-	if(bytes.length>=3&&bytes[0]===0xff&&bytes[1]===0xd8&&bytes[2]===0xff)return 'jpeg';
-	if(bytes.length>=12&&bytes.subarray(0,4).toString()==='RIFF'&&bytes.subarray(8,12).toString()==='WEBP')return 'webp';
-	return null;
-}
 
 export async function POST(request:Request,{params}:{params:Promise<{id:string}>}){
 	let newKey:string|undefined;
@@ -27,22 +17,23 @@ export async function POST(request:Request,{params}:{params:Promise<{id:string}>
 		const user=await requireUser();
 		ownerId=user.id;
 		const contentLength=Number(request.headers.get('content-length')||0);
-		if(contentLength>maxUploadBytes+64*1024)return NextResponse.json({error:'Receipt must be 5 MB or smaller.'},{status:413});
+		if(contentLength>maxFundingEvidenceBytes+64*1024)return NextResponse.json({error:'Evidence must be 5 MB or smaller.'},{status:413});
 		const form=await request.formData();
 		const file=form.get('file');
-		if(!(file instanceof File)||file.size===0||file.size>maxUploadBytes)return NextResponse.json({error:'Choose a non-empty receipt file no larger than 5 MB.'},{status:400});
+		if(!(file instanceof File))return NextResponse.json({error:'Choose a receipt file.'},{status:400});
+		if(file.size===0)throw new FundingEvidenceError('Choose a non-empty evidence file.',400);
+		if(file.size>maxFundingEvidenceBytes)throw new FundingEvidenceError('Evidence must be 5 MB or smaller.',413);
 		const requestRow=await db.fundingRequest.findFirst({where:{id,userId:user.id,accountMode:user.accountMode,type:FundingType.DEPOSIT,status:{in:reviewableStatuses}},select:{id:true,userId:true,accountMode:true,amount:true,currency:true,status:true,receiptKey:true}});
 		if(!requestRow)return NextResponse.json({error:'Pending deposit request not found.'},{status:404});
 		const bytes=Buffer.from(await file.arrayBuffer());
-		const format=detectFormat(bytes);
-		if(!format||fileTypes[format].mime!==file.type||!hasMatchingFileExtension(file.name,fileTypes[format].mime))return NextResponse.json({error:'Receipt must be a valid PDF, PNG, JPEG, or WebP file with a matching extension.'},{status:415});
-		const receiptKey=createPrivateObjectKey('receipt',user.id,fileTypes[format].mime);
+		const {contentType}=validateFundingEvidence(file,bytes);
+		const receiptKey=createPrivateObjectKey('receipt',user.id,contentType);
 		newKey=receiptKey;
-		await uploadPrivateObject('receipt',user.id,receiptKey,bytes,fileTypes[format].mime);
+		await uploadPrivateObject('receipt',user.id,receiptKey,bytes,contentType);
 		const updated=await db.$transaction(async tx=>{
 			const claimed=await tx.fundingRequest.updateMany({where:{id:requestRow.id,userId:user.id,type:FundingType.DEPOSIT,status:{in:reviewableStatuses}},data:{receiptKey}});
 			if(claimed.count!==1)throw new Error('RECEIPT_REQUEST_CHANGED');
-			await tx.auditLog.create({data:{actorId:user.id,action:'PAYMENT_RECEIPT_UPLOADED',entity:'FUNDING',entityId:requestRow.id,metadata:{accountMode:requestRow.accountMode,fileType:fileTypes[format].mime,fileSize:bytes.length}}});
+			await tx.auditLog.create({data:{actorId:user.id,action:'PAYMENT_RECEIPT_UPLOADED',entity:'FUNDING',entityId:requestRow.id,metadata:{accountMode:requestRow.accountMode,fileType:contentType,fileSize:bytes.length}}});
 			await createNotification(tx,{userId:user.id,type:NotificationType.DEPOSIT,title:'Payment receipt received',message:'Your receipt is stored privately and is awaiting administrator review. Funds have not been credited.',dedupeKey:`funding:${requestRow.id}:receipt:${receiptKey.split('/').at(-1)}`,relatedEntity:'FUNDING',relatedId:requestRow.id,actionUrl:`/wallet/transactions/${requestRow.id}`});
 			await notifyActiveAdmins(tx,{type:NotificationType.DEPOSIT,title:'Payment receipt uploaded',message:`A deposit receipt for a ${requestRow.accountMode.toLowerCase()} request awaits review.`,dedupeKey:`funding:${requestRow.id}:receipt-admin:${receiptKey.split('/').at(-1)}`,relatedEntity:'FUNDING',relatedId:requestRow.id,actionUrl:'/admin'});
 			return {previousKey:requestRow.receiptKey};
@@ -54,6 +45,7 @@ export async function POST(request:Request,{params}:{params:Promise<{id:string}>
 		if(newKey&&ownerId)await deletePrivateObject('receipt',ownerId,newKey);
 		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Sign in to upload a receipt.'},{status:401});
 		if(error instanceof Error&&error.message==='RECEIPT_REQUEST_CHANGED')return NextResponse.json({error:'The funding request changed. Refresh and try again.'},{status:409});
+		if(error instanceof FundingEvidenceError)return NextResponse.json({error:error.message},{status:error.status});
 		if(error instanceof PrivateStorageError)return NextResponse.json({error:error.message},{status:error.status});
 		console.error('Payment receipt upload failed.');
 		return NextResponse.json({error:'Receipt upload is temporarily unavailable.'},{status:503});

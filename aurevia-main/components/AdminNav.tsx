@@ -54,7 +54,7 @@ export default function AdminNav(){
 			<nav id="admin-navigation" aria-label="Administrator navigation" className={`admin-command-links ${open?'is-open':''}`} onKeyDown={event=>{if(event.key==='Escape')close()}}>
 				{status==='loading'?<p className="admin-nav-loading" role="status">Restoring administrator session…</p>:isAdmin?<div className="admin-command-groups">{groups.map(group=><section className="admin-command-group" key={group.title} aria-label={group.title}>
 					<h2>{group.title}</h2>
-					{group.links.map(({href,label,icon:Icon})=><Link key={href} href={href} onClick={close} aria-current={!href.includes('#')&&pathname===href?'page':undefined}><Icon size={15} aria-hidden="true"/><span>{label}</span></Link>)}
+					{group.links.map(({href,label,icon:Icon})=><Link key={href} href={href} title={label} aria-label={label} onClick={close} aria-current={!href.includes('#')&&pathname===href?'page':undefined}><Icon size={15} aria-hidden="true"/><span>{label}</span></Link>)}
 				</section>)}</div>:<p className="admin-nav-loading">Administrator access required</p>}
 			</nav>
 			<div className="admin-nav-actions">

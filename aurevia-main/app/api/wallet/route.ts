@@ -10,6 +10,8 @@ import {notifyActiveAdmins} from '@/lib/notifications';
 import {sendSupportEmail} from '@/lib/email';
 import {validateWithdrawal} from '@/lib/production-policy';
 import {getFundingProviderReadiness} from '@/lib/providers/funding-provider';
+import {FundingEvidenceError,maxFundingEvidenceBytes,validateFundingEvidence} from '@/lib/funding-evidence';
+import {createPrivateObjectKey,deletePrivateObject,PrivateStorageError,uploadPrivateObject} from '@/lib/private-storage';
 
 const schema=z.object({
 	type:z.nativeEnum(FundingType),
@@ -51,11 +53,42 @@ export async function GET(){
 }
 
 export async function POST(req:Request){
+	let receiptKey:string|undefined;
+	let ownerId:string|undefined;
+	let evidenceMetadata:{fileType:string;fileSize:number}|undefined;
 	try{
 		const user=await requireUser();
-		const parsed=schema.parse(await req.json());
+		ownerId=user.id;
+		let body:unknown;
+		let evidenceFile:File|null=null;
+		if(req.headers.get('content-type')?.includes('multipart/form-data')){
+			if(Number(req.headers.get('content-length')||0)>maxFundingEvidenceBytes+64*1024)return NextResponse.json({error:'Evidence must be 5 MB or smaller.'},{status:413});
+			const form=await req.formData();
+			const payload=form.get('payload');
+			if(typeof payload!=='string')return NextResponse.json({error:'Funding details are required.'},{status:400});
+			try{body=JSON.parse(payload)}catch{return NextResponse.json({error:'Funding details are invalid.'},{status:400})}
+			const file=form.get('evidence');
+			if(file instanceof File)evidenceFile=file;
+		}else{
+			body=await req.json();
+		}
+		const parsed=schema.parse(body);
 		const idempotencyKey=req.headers.get('Idempotency-Key');
 		if(!idempotencyKey||idempotencyKey.length>128)return NextResponse.json({error:'A valid idempotency key is required.'},{status:400});
+		if(parsed.type===FundingType.DEPOSIT){
+			const access=await db.user.findUniqueOrThrow({where:{id:user.id},select:{depositEnabled:true}});
+			if(!access.depositEnabled)throw new Error('DEPOSITS_DISABLED');
+		}
+		if(parsed.type===FundingType.DEPOSIT){
+			if(!evidenceFile)return NextResponse.json({error:'Attach a payment screenshot before submitting a deposit request.'},{status:400});
+			if(evidenceFile.size===0)throw new FundingEvidenceError('Choose a non-empty evidence file.',400);
+			if(evidenceFile.size>maxFundingEvidenceBytes)throw new FundingEvidenceError('Evidence must be 5 MB or smaller.',413);
+			const bytes=Buffer.from(await evidenceFile.arrayBuffer());
+			const {contentType}=validateFundingEvidence(evidenceFile,bytes,{imagesOnly:true});
+			evidenceMetadata={fileType:contentType,fileSize:bytes.length};
+			receiptKey=createPrivateObjectKey('receipt',user.id,contentType);
+			await uploadPrivateObject('receipt',user.id,receiptKey,bytes,contentType);
+		}
 		if(parsed.type==='WITHDRAWAL'){
 			const controls=await db.user.findUniqueOrThrow({where:{id:user.id},select:{withdrawalEnabled:true,accountRestricted:true}});
 			if(!controls.withdrawalEnabled)throw new Error('WITHDRAWAL_DISABLED');
@@ -117,21 +150,29 @@ export async function POST(req:Request){
 				beneficiaryInfo:parsed.beneficiaryInfo||null,
 				network:parsed.network||null,
 				note:parsed.note||null,
+				receiptKey:receiptKey||null,
 			}});
-			await tx.auditLog.create({data:{actorId:user.id,action:'FUNDING_SUBMITTED',entity:'FUNDING',entityId:request.id,metadata:{type:request.type,accountMode:request.accountMode,currency:request.currency,amount:request.amount.toString()}}});
+			await tx.auditLog.create({data:{actorId:user.id,action:'FUNDING_SUBMITTED',entity:'FUNDING',entityId:request.id,metadata:{type:request.type,accountMode:request.accountMode,currency:request.currency,amount:request.amount.toString(),hasEvidence:!!receiptKey}}});
+			if(receiptKey)await tx.auditLog.create({data:{actorId:user.id,action:'PAYMENT_RECEIPT_UPLOADED',entity:'FUNDING',entityId:request.id,metadata:{accountMode:request.accountMode,...evidenceMetadata}}});
 			const notificationType=request.type===FundingType.DEPOSIT?NotificationType.DEPOSIT:NotificationType.WITHDRAWAL;
 			await createNotification(tx,{userId:user.id,type:notificationType,title:`${request.type==='DEPOSIT'?'Deposit':'Withdrawal'} submitted`,message:`Your ${request.type.toLowerCase()} request is pending administrator review. No transfer has been confirmed.`,dedupeKey:`funding:${request.id}:submitted`,relatedEntity:'FUNDING',relatedId:request.id,actionUrl:`/wallet/transactions/${request.id}`});
-			await notifyActiveAdmins(tx,{type:notificationType,title:`New ${request.type.toLowerCase()} request`,message:`A ${request.accountMode.toLowerCase()} ${request.type.toLowerCase()} request is awaiting review. No payment is confirmed.`,dedupeKey:`funding:${request.id}:admin`,relatedEntity:'FUNDING',relatedId:request.id,actionUrl:'/admin'});
+			await notifyActiveAdmins(tx,{type:notificationType,title:`New ${request.type.toLowerCase()} request`,message:`A ${request.accountMode.toLowerCase()} ${request.type.toLowerCase()} request is awaiting review${receiptKey?' with payment evidence':''}. No payment is confirmed.`,dedupeKey:`funding:${request.id}:admin`,relatedEntity:'FUNDING',relatedId:request.id,actionUrl:'/admin'});
 			return {request,replay:false};
 		},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+		if(result.replay&&receiptKey)await deletePrivateObject('receipt',user.id,receiptKey);
+		const {receiptKey:storedReceiptKey,...safeRequest}=result.request;
+		receiptKey=undefined;
 		let emailDelivery:'sent'|'not-configured'|'failed'='not-configured';
 		if(!result.replay){
 			const delivery=await sendSupportEmail(`New ${result.request.type.toLowerCase()} request`,[`Request: ${result.request.id}`,`User: ${user.id}`,`Account mode: ${result.request.accountMode}`,`Amount: ${result.request.amount.toString()} ${result.request.currency}`,`Status: ${result.request.status}`].join('\n'));
 			emailDelivery=delivery.sent?'sent':delivery.reason||'failed';
 		}
-		return NextResponse.json({...jsonSafe(result.request),emailDelivery},{status:result.replay?200:201});
+		return NextResponse.json({...jsonSafe(safeRequest),hasReceipt:!!storedReceiptKey,emailDelivery},{status:result.replay?200:201});
 	}catch(error){
+		if(receiptKey&&ownerId)await deletePrivateObject('receipt',ownerId,receiptKey);
 		if(error instanceof ZodError)return NextResponse.json({error:'Check the funding details and try again.'},{status:400});
+		if(error instanceof FundingEvidenceError)return NextResponse.json({error:error.message},{status:error.status});
+		if(error instanceof PrivateStorageError)return NextResponse.json({error:error.message},{status:error.status});
 		if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')return NextResponse.json({error:'This submission was already received.'},{status:409});
 		const known=['IDEMPOTENCY_KEY_REUSED','PAYMENT_METHOD_UNAVAILABLE','AMOUNT_OUT_OF_RANGE','PAYMENT_INSTRUCTIONS_UNAVAILABLE','WITHDRAWAL_DESTINATION_REQUIRED','WITHDRAWAL_NETWORK_REQUIRED','INSUFFICIENT_AVAILABLE_BALANCE','DEPOSITS_DISABLED','WITHDRAWAL_DISABLED','ACCOUNT_RESTRICTED','REAL_KYC_REQUIRED','INVALID_AMOUNT','FIRST_TRADE_REQUIRED'];
 		if(error instanceof Error&&known.includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:error.message==='IDEMPOTENCY_KEY_REUSED'?409:error.message==='DEPOSITS_DISABLED'||error.message==='ACCOUNT_RESTRICTED'||error.message==='WITHDRAWAL_DISABLED'||error.message==='REAL_KYC_REQUIRED'||error.message==='FIRST_TRADE_REQUIRED'?403:400});
