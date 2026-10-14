@@ -19,12 +19,7 @@ export function nextInvestmentStatus(status:InvestmentStatus,action:InvestmentAc
  return next;
 }
 
-export function validateInvestmentSettlement(accountMode:AccountMode,reference:string|undefined,payout:number|undefined){
- if(accountMode===AccountMode.REAL){
-  if(!reference?.trim())throw new Error('EXTERNAL_SETTLEMENT_REFERENCE_REQUIRED');
-  if(payout!==undefined)throw new Error('REAL_PAYOUT_NOT_SUPPORTED');
-  return;
- }
+export function validateInvestmentSettlement(payout:number|undefined){
  if(payout===undefined||!Number.isFinite(payout)||payout<0)throw new Error('SIMULATED_PAYOUT_REQUIRED');
 }
 

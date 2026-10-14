@@ -32,10 +32,9 @@ export async function POST(request:Request){
 				if(prior.description!==description||!prior.entries.some(entry=>entry.account.userId===input.userId&&entry.account.accountMode===input.accountMode&&entry.account.currency===input.currency&&entry.amount.eq(amount)&&entry.type===(input.direction==='CREDIT'?EntryType.CREDIT:EntryType.DEBIT)))throw new Error('IDEMPOTENCY_KEY_REUSED');
 				return {reference,transactionId:prior.id,replayed:true};
 			}
-			const customer=await tx.user.findUnique({where:{id:input.userId},select:{id:true,role:true,status:true,kycStatus:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true},take:1}}});
+			const customer=await tx.user.findUnique({where:{id:input.userId},select:{id:true,role:true,status:true}});
 			if(!customer||customer.role!=='USER')throw new Error('CUSTOMER_ACCOUNT_REQUIRED');
 			if(customer.status!==UserStatus.ACTIVE)throw new Error('ACCOUNT_NOT_ACTIVE');
-			if(input.accountMode===AccountMode.REAL&&(customer.kycStatus!=='APPROVED'||!customer.kyc?.submittedAt||customer.kycDocuments.length===0))throw new Error('REAL_KYC_REQUIRED');
 			const account=await ensureUserLedger(tx,customer.id,input.accountMode,input.currency);
 			const availableBefore=await balance(tx,account.id);
 			if(input.direction==='DEBIT'&&availableBefore.lt(amount))throw new Error('INSUFFICIENT_BALANCE');
@@ -45,7 +44,7 @@ export async function POST(request:Request){
 			const transaction=await tx.ledgerTransaction.create({data:{reference,description,entries:{create:[{account:{connect:{id:debitAccount.id}},type:EntryType.DEBIT,amount},{account:{connect:{id:creditAccount.id}},type:EntryType.CREDIT,amount}]}}});
 			const availableAfter=await balance(tx,account.id);
 			await tx.auditLog.create({data:{actorId:admin.id,action:`ADMIN_ACCOUNT_${input.direction}`,entity:'LEDGER_TRANSACTION',entityId:transaction.id,metadata:{userId:customer.id,accountMode:input.accountMode,currency:input.currency,amount:amount.toString(),category:input.category,reason:input.reason,reference,previousBalance:availableBefore.toString(),newBalance:availableAfter.toString(),administrativeRealAllocation:input.accountMode===AccountMode.REAL}}});
-			await createNotification(tx,{userId:customer.id,type:NotificationType.ACCOUNT,title:`${input.accountMode} account ${input.direction.toLowerCase()} recorded`,message:`An administrator recorded a ${input.direction.toLowerCase()} of ${amount.toFixed(2)} ${input.currency} in your ${input.accountMode} account (${input.category}). Reason: ${input.reason}. Reference: ${reference}.${input.accountMode===AccountMode.REAL?' This is an administrative ledger entry, not proof of payment settlement or external asset custody.':' This is virtual simulated account activity.'}`,dedupeKey:`admin-ledger:${reference}`,relatedEntity:'LEDGER_TRANSACTION',relatedId:transaction.id,actionUrl:'/wallet/transactions'});
+			await createNotification(tx,{userId:customer.id,type:NotificationType.ACCOUNT,title:`${input.accountMode} account ${input.direction.toLowerCase()} recorded`,message:`An administrator recorded a ${input.direction.toLowerCase()} of ${amount.toFixed(2)} ${input.currency} in your ${input.accountMode} account (${input.category}). Reason: ${input.reason}. Reference: ${reference}.${input.accountMode===AccountMode.REAL?' These are simulated ledger funds; no external payment or asset transfer occurred.':' This is virtual simulated account activity.'}`,dedupeKey:`admin-ledger:${reference}`,relatedEntity:'LEDGER_TRANSACTION',relatedId:transaction.id,actionUrl:'/wallet/transactions'});
 			return {reference,transactionId:transaction.id,replayed:false,previousBalance:availableBefore.toString(),newBalance:availableAfter.toString()};
 		},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
 		return NextResponse.json(result,{status:result.replayed?200:201,headers:{'Cache-Control':'private, no-store'}});
@@ -56,7 +55,6 @@ export async function POST(request:Request){
 		if(error instanceof Error&&error.message==='IDEMPOTENCY_KEY_REUSED')return NextResponse.json({error:'This request key has already been used for a different adjustment.'},{status:409});
 		if(error instanceof Error&&error.message==='CUSTOMER_ACCOUNT_REQUIRED')return NextResponse.json({error:'Select an existing customer account.'},{status:409});
 		if(error instanceof Error&&error.message==='ACCOUNT_NOT_ACTIVE')return NextResponse.json({error:'Only active customer accounts can be adjusted.'},{status:409});
-		if(error instanceof Error&&error.message==='REAL_KYC_REQUIRED')return NextResponse.json({error:'Approved identity verification is required before recording a REAL account credit.'},{status:409});
 		if(error instanceof Error&&error.message==='INSUFFICIENT_BALANCE')return NextResponse.json({error:'The selected account does not have enough available balance for this debit.'},{status:409});
 		if(error&&typeof error==='object'&&'code' in error&&String(error.code)==='P2034')return NextResponse.json({error:'The account changed during this adjustment. Retry with the same request key.'},{status:409});
 		console.error('Administrative balance adjustment failed.',error&&typeof error==='object'&&'code' in error?String(error.code):error instanceof Error?error.name:'UnknownError');

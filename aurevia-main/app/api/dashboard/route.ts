@@ -42,9 +42,9 @@ export async function GET(){
     const validInvestments=investments.filter(investment=>!!investment.opportunity);
     const supportedMarketInstruments=filterSupportedMarketAssets(marketInstruments);
     const cash=account?await optionalData('ledger balance',()=>balance(db,account.id),null):null;
-    const positionValue=mode===AccountMode.DEMO?validPositions.reduce((sum,p)=>sum.plus(p.quantity.mul(p.instrument.price)),new Prisma.Decimal(0)):new Prisma.Decimal(0);
-    const invested=mode===AccountMode.DEMO?validInvestments.filter(i=>[InvestmentStatus.PENDING_APPROVAL,InvestmentStatus.APPROVED,InvestmentStatus.ACTIVE,InvestmentStatus.PAUSED,InvestmentStatus.COMPLETED].some(status=>status===i.status)).reduce((sum,i)=>sum.plus(i.amount),new Prisma.Decimal(0)):new Prisma.Decimal(0);
-    const unrealized=mode===AccountMode.DEMO?validPositions.reduce((sum,p)=>sum.plus((p.side==='BUY'?p.instrument.price.minus(p.entryPrice):p.entryPrice.minus(p.instrument.price)).mul(p.quantity)),new Prisma.Decimal(0)):new Prisma.Decimal(0);
+    const positionValue=validPositions.reduce((sum,p)=>sum.plus(p.quantity.mul(p.instrument.price)),new Prisma.Decimal(0));
+    const invested=validInvestments.filter(i=>[InvestmentStatus.PENDING_APPROVAL,InvestmentStatus.APPROVED,InvestmentStatus.ACTIVE,InvestmentStatus.PAUSED,InvestmentStatus.COMPLETED].some(status=>status===i.status)).reduce((sum,i)=>sum.plus(i.amount),new Prisma.Decimal(0));
+    const unrealized=validPositions.reduce((sum,p)=>sum.plus((p.side==='BUY'?p.instrument.price.minus(p.entryPrice):p.entryPrice.minus(p.instrument.price)).mul(p.quantity)),new Prisma.Decimal(0));
     const activity=await optionalData('recent activity',()=>getUserActivity(user.id,mode,'all',8),{items:[],total:0,hasMore:false,cursor:null});
     const recentActivity=activity.items.map(item=>({id:item.id,category:item.category,action:item.action,timestamp:item.timestamp,asset:item.asset,amount:item.amount,status:item.status,source:item.sourceLabel,pnl:item.pnl,adminInitiated:item.adminInitiated,link:item.link}));
     const tier=getAccountTier({accountMode:mode,kycStatus:profile?.kycStatus||'PENDING',verificationDocuments,verificationSubmitted:!!kyc?.submittedAt,approvedTier:profile?.approvedTier});

@@ -5,7 +5,7 @@ import {z,ZodError} from 'zod';
 import {requireUser} from '@/lib/auth';
 import {db} from '@/lib/db';
 import {balance,ensureSystemAccount,ensureUserLedger,initializeDemoAccount,postDoubleEntry} from '@/lib/ledger';
-import {closeDemoPositionTx} from '@/lib/orders';
+import {closeSimulatedPositionTx} from '@/lib/orders';
 import {createNotification} from '@/lib/notifications';
 import {rateLimit} from '@/lib/rate-limit';
 
@@ -44,7 +44,7 @@ export async function POST(request:Request){
    }
 
    const positions=await tx.position.findMany({where:{userId:user.id,accountMode:AccountMode.DEMO,status:PositionStatus.OPEN},select:{id:true}});
-   for(const position of positions)await closeDemoPositionTx(tx,user.id,position.id);
+   for(const position of positions)await closeSimulatedPositionTx(tx,user.id,position.id);
    const account=await ensureUserLedger(tx,user.id,AccountMode.DEMO,'USD');
    const currentBalance=await balance(tx,account.id);
    const difference=account.startingBalance.minus(currentBalance);

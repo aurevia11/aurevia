@@ -1,13 +1,11 @@
 "use client";
 import { FormEvent, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
-import Link from "next/link";
 import Nav from "@/components/Nav";
 import { useLocale } from "@/lib/i18n-context";
-import LiveMarketPreview from "@/components/LiveMarketPreview";
 import PriceChart from "@/components/PriceChart";
 import { useTradingStore } from "@/lib/store";
-import { ArrowDownRight, ArrowUpRight, ChartNoAxesCombined, RefreshCw } from "lucide-react";
+import { ArrowDownRight, ChartNoAxesCombined, RefreshCw } from "lucide-react";
 type I = { id: string; symbol: string; price: number; change?: number; takerFee?: number; leverage?: number; updatedAt?:string; lastUpdatedAt?:string };
 type Order = {
   id: string;
@@ -55,14 +53,6 @@ export default function Trade() {
     setMsg('');
     const load = async () => {
       try {
-        if(session?.user?.accountMode==='REAL'){
-          const [orderResponse,walletResponse]=await Promise.all([fetch("/api/orders"),fetch("/api/wallet")]);
-          if(!orderResponse.ok||!walletResponse.ok)throw new Error("Unable to load REAL account data.");
-          const [orderData,walletData]=await Promise.all([orderResponse.json(),walletResponse.json()]);
-          if(!active)return;
-          setItems([]);setSelected("");setOrders(orderData);setPositions([]);setAccountMode('REAL');setAvailableBalance(Number(walletData.balance));
-          return;
-        }
         const responses = await Promise.all([
           fetch("/api/market"),
           fetch("/api/orders"),
@@ -100,7 +90,6 @@ export default function Trade() {
       }
     };
     void load();
-    if(session?.user?.accountMode==='REAL')return()=>{active=false;};
     const refreshPrices=async()=>{
       try{
         const response=await fetch("/api/market",{cache:"no-store"});
@@ -119,7 +108,7 @@ export default function Trade() {
     };
   }, [updateStore,sessionStatus,session?.user?.accountMode]);
   useEffect(() => {
-    if (!selected||accountMode!=='DEMO') return;
+    if (!selected||(accountMode!=='DEMO'&&accountMode!=='REAL')) return;
     const load = () =>
       fetch(`/api/orderbook?instrumentId=${selected}`)
         .then((r) => r.json())
@@ -140,7 +129,6 @@ export default function Trade() {
 
   async function place(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if(accountMode!=='DEMO'){setMsg(translate('realTradingUnavailable'));return;}
     if (placing) return;
     setPlacing(true);
     setMsg("");
@@ -198,8 +186,9 @@ export default function Trade() {
     <>
       <Nav />
       <main className="trade-terminal">
-        <header className="account-heading"><div><span className="account-kicker">{accountMode==='LOADING'?translate('restoringAccountMode'):`${accountMode} ACCOUNT · ${translate('tradingWorkspace')}`}</span><h1>{translate('tradeMarkets')}</h1><p>{accountMode==='REAL'?translate('realAccountTradingDescription'):translate('tradeMarketsDescription')}</p></div><span className={`status-pill ${accountMode==='REAL'?'mode-real':'mode-demo'}`}>{accountMode==='LOADING'?'RESTORING':accountMode==='REAL'?'REAL · ACTIVE':'DEMO · SIMULATED'}</span></header>
-        {accountMode==='REAL'?<div className="real-trade-view"><div className="account-callout"><span>{translate('realTradingNotice')}</span></div><section className="account-panel card p-5"><LiveMarketPreview/></section><section className="account-panel card p-5"><div className="account-panel-title"><div><h2>{translate('realExecutionStatus')}</h2><p className="account-panel-subtitle">{translate('realLedgerDescription')}</p></div><span className="status-pill mode-real">{translate('activeReadOnly')}</span></div><Link className="text-link" href="/markets">{translate('openLiveCharts')} <ArrowUpRight size={14}/></Link><Link className="text-link ml-4" href="/wallet">{translate('openRealWallet')} <ArrowUpRight size={14}/></Link></section></div>:accountMode==='DEMO'?<>
+        <header className="account-heading"><div><span className="account-kicker">{accountMode==='LOADING'?translate('restoringAccountMode'):`${accountMode} ACCOUNT · ${translate('tradingWorkspace')}`}</span><h1>{translate('tradeMarkets')}</h1><p>Orders and positions in both account modes use simulated execution; no external trades are placed.</p></div><span className={`status-pill ${accountMode==='REAL'?'mode-real':'mode-demo'}`}>{accountMode==='LOADING'?'RESTORING':`${accountMode} · SIMULATED`}</span></header>
+        {(accountMode==='REAL'||accountMode==='DEMO')?<>
+        {accountMode==='REAL'&&<div className="account-callout mb-4" role="status"><span>REAL account balance and trades are simulated ledger activity. No external orders are placed and no money is transferred.</span></div>}
         <div className="grid gap-4 xl:grid-cols-[1fr_340px]">
           <section className="card min-h-[650px] p-5">
             <div className="trade-market-select" role="group" aria-label={translate('selectAnInstrument')}>
@@ -262,9 +251,9 @@ export default function Trade() {
             </div>
           </section>
           <section className="card p-5">
-            <div className="account-panel-title"><div><h2>{translate('orderTicket')}</h2><p className="account-panel-subtitle">{translate('reviewDemoEstimate')}</p></div><span className="status-pill mode-demo">{translate('demo')}</span></div>
+            <div className="account-panel-title"><div><h2>{translate('orderTicket')}</h2><p className="account-panel-subtitle">Simulated order estimate</p></div><span className={`status-pill ${accountMode==='REAL'?'mode-real':'mode-demo'}`}>{accountMode} · SIMULATED</span></div>
             <form onSubmit={place} className="space-y-3">
-              <fieldset disabled={accountMode!=='DEMO'} className="space-y-3">
+              <fieldset className="space-y-3">
               <div className="grid grid-cols-2 gap-2" role="group" aria-label={translate('orderSide')}>
               <button type="button" aria-pressed={side === "BUY"}
                 onClick={() => setSide("BUY")}
@@ -282,8 +271,8 @@ export default function Trade() {
               <label className="account-label">{translate('orderType')}<select className="input" required value={type} onChange={(event) => setType(event.target.value as "MARKET"|"LIMIT"|"STOP")}><option value="MARKET">Market</option><option value="LIMIT">Limit</option><option value="STOP">Stop</option></select></label>
               <label className="account-label">{translate('quantity')}<input className="input" type="number" min="0.00000001" step="any" inputMode="decimal" required value={qty} onChange={(event) => setQty(event.target.value)} placeholder="0.00"/></label>
               {type !== "MARKET" && <label className="account-label">{type === "STOP" ? translate('stopPrice') : translate('limitPrice')}<input className="input" type="number" min="0.00000001" step="any" inputMode="decimal" required value={price} onChange={(event) => setPrice(event.target.value)} placeholder="0.00"/></label>}
-              <div className="trade-estimate" aria-live="polite"><div><span>{translate('availableDemoCash')}</span><b>{availableBalance===null?"Loading…":`$${availableBalance.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`}</b></div><div><span>{translate('estimatedRequiredCash')}</span><b>{cur?`$${estimatedRequiredCash.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`:"—"}</b></div><div><span>{translate('estimatedFee')}</span><b>{cur?.takerFee===undefined?"Not configured":`$${estimatedFee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})}`}</b></div></div>
-              <p className="trade-estimate-note">{translate('demoSpotOrders')}</p>
+              <div className="trade-estimate" aria-live="polite"><div><span>Available simulated {accountMode} balance</span><b>{availableBalance===null?"Loading…":`$${availableBalance.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`}</b></div><div><span>{translate('estimatedRequiredCash')}</span><b>{cur?`$${estimatedRequiredCash.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`:"—"}</b></div><div><span>{translate('estimatedFee')}</span><b>{cur?.takerFee===undefined?"Not configured":`$${estimatedFee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})}`}</b></div></div>
+              <p className="trade-estimate-note">Orders use simulated execution and do not reach an external broker or exchange.</p>
               <button type="submit" disabled={placing||!selected} className="btn w-full bg-gold text-black disabled:opacity-50">{placing?translate('submittingOrder'):translate('placeOrder',{side})}</button>
               </fieldset>
               {msg&&<p className="text-sm muted" role="status">{msg}</p>}
