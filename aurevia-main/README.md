@@ -220,11 +220,11 @@ Submit the KYC form and upload an identity document to private storage. Admin re
 
 ### 5. Funding
 
-Configure an enabled payment method in `/admin/payments` (store a Bitcoin receiving address in its destination field for a BTC method). Submit a deposit form in `/wallet` with a screenshot; the request and private evidence appear in the administrator funding queue. Admin reviews the evidence and approves or rejects the request. Only approval posts the credited amount through a double-entry ledger transaction, and the user can download generated pending and approval receipts.
+Configure an enabled payment method in `/admin/payments` (store a Bitcoin receiving address in its destination field for a BTC method). From an eligible REAL account, submit a deposit form in `/wallet` with a screenshot; the request and private evidence appear in the administrator funding queue. Admin reviews the evidence and approves or rejects the request. Only approval posts the credited amount through a double-entry ledger transaction, and the user can download generated pending and approval receipts.
 
 Withdrawal requests reserve available balance and require administrator review. Approval checks eligibility and available ledger balance inside a serializable database transaction and is recorded in the audit log; REAL external payout and settlement remain disabled until a payout provider is connected.
 
-Approved DEMO withdrawals remain reserved while processing. Administrators must record a reason for each lifecycle action: completion posts the simulated debit, failure releases the reservation without a debit, and reversal posts a compensating credit. Each transition is audited and idempotent. The `/admin/markets` page can generate bounded, audited price changes for supported simulation instruments; it does not publish live quotes. Users can select a persistent display currency across wallet, dashboard, portfolio, activity, and USD transaction history; converted amounts are informational only and never change USD ledger balances.
+DEMO deposits and withdrawals are unavailable; the wallet UI and API reject new requests, and administrators cannot approve or execute legacy DEMO funding requests. Administrators may mark a previously approved or processing DEMO withdrawal as failed solely to release its old reservation; no simulated payout is available. REAL funding requests remain gated by identity approval and evidence review. An approved REAL deposit is an internal ledger credit only, not proof of payment, an external transfer, or custody of assets. Administrators may also make audited, KYC-gated REAL ledger credits from the account-adjustment panel; these do not process payments or move external money. The `/admin/markets` page can generate bounded, audited price changes for supported simulation instruments; it does not publish live quotes. Users can select a persistent display currency across wallet, dashboard, portfolio, activity, and USD transaction history; converted amounts are informational only and never change USD ledger balances.
 
 ### 6. Trading
 
@@ -253,7 +253,7 @@ From `/admin`, test:
 - Approve/reject KYC
 - Change USER/ADMIN role
 - Approve/reject funding
-- Process, complete, fail, or reverse DEMO withdrawals with an audit reason
+- Reject historical DEMO funding requests; release only stale DEMO withdrawal reservations
 - Force-close positions
 - Enable/disable instruments
 - Generate audited SIMULATED price ticks from `/admin/markets`

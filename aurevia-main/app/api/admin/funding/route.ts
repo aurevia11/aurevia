@@ -35,6 +35,7 @@ export async function PATCH(req:Request){
 		const admin=await requireAdmin();
 		const input=schema.parse(await req.json());
 		const candidate=await db.fundingRequest.findUnique({where:{id:input.id},select:{id:true,userId:true,type:true,accountMode:true,status:true}});
+		if(candidate?.accountMode===AccountMode.DEMO&&input.decision==='APPROVED')return NextResponse.json({error:'DEMO deposits and withdrawals are unavailable.'},{status:409});
 		if(candidate?.accountMode===AccountMode.REAL&&input.decision==='APPROVED'&&candidate.type===FundingType.WITHDRAWAL){
 			await db.auditLog.create({data:{actorId:admin.id,action:'REAL_WITHDRAWAL_APPROVAL_BLOCKED',entity:'FUNDING',entityId:candidate.id,metadata:{accountMode:AccountMode.REAL,reason:'PAYOUT_PROVIDER_UNAVAILABLE'}}});
 			return NextResponse.json({error:'REAL_WITHDRAWAL_PROVIDER_UNAVAILABLE'},{status:409});

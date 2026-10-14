@@ -1,5 +1,5 @@
 import {NextResponse} from 'next/server';
-import {Prisma,FundingStatus,FundingType,InvestmentStatus,NotificationType,KycStatus} from '@prisma/client';
+import {AccountMode,Prisma,FundingStatus,FundingType,InvestmentStatus,NotificationType,KycStatus} from '@prisma/client';
 import {z,ZodError} from 'zod';
 import {requireUser} from '@/lib/auth';
 import {db} from '@/lib/db';
@@ -75,6 +75,13 @@ export async function POST(req:Request){
 		const parsed=schema.parse(body);
 		const idempotencyKey=req.headers.get('Idempotency-Key');
 		if(!idempotencyKey||idempotencyKey.length>128)return NextResponse.json({error:'A valid idempotency key is required.'},{status:400});
+		if(user.accountMode===AccountMode.DEMO){
+			const controls=await db.user.findUniqueOrThrow({where:{id:user.id},select:{depositEnabled:true,withdrawalEnabled:true,accountRestricted:true}});
+			if(parsed.type===FundingType.DEPOSIT&&!controls.depositEnabled)throw new Error('DEPOSITS_DISABLED');
+			if(parsed.type===FundingType.WITHDRAWAL&&!controls.withdrawalEnabled)throw new Error('WITHDRAWAL_DISABLED');
+			if(parsed.type===FundingType.WITHDRAWAL&&controls.accountRestricted)throw new Error('ACCOUNT_RESTRICTED');
+			return NextResponse.json({error:'DEMO deposits and withdrawals are unavailable.'},{status:409});
+		}
 		if(parsed.type===FundingType.DEPOSIT){
 			const access=await db.user.findUniqueOrThrow({where:{id:user.id},select:{depositEnabled:true}});
 			if(!access.depositEnabled)throw new Error('DEPOSITS_DISABLED');
