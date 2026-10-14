@@ -400,7 +400,7 @@ const base = {
   walletSubtitle: "Manage your account funding requests and review your latest balance activity.",
   walletTitle: "Account funds",
   walletHeader: "Wallet & funding",
-  realFundingNotice: "Review your current Real Account balance and pending funding activity. Internal ledger updates are applied only after administrator approval.",
+  realFundingNotice: "REAL-mode deposits and withdrawals are simulated internal ledger activity. No external money moves; changes require administrator review.",
   availableBalances: "Available {mode} balances",
   walletDemoNote: "Only approved ledger entries are included. Pending withdrawals are reserved below.",
   enabledPaymentMethods: "Enabled payment methods",

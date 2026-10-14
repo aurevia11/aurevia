@@ -8,12 +8,13 @@ const quotePrecision=10;
 
 export function calculateSimulatedBitcoinConversion(direction:'BUY'|'SELL',amount:Prisma.Decimal,price:Prisma.Decimal,feeRate:Prisma.Decimal){
  if(amount.lte(0)||price.lte(0)||feeRate.lt(0)||feeRate.gte(1))throw new Error('INVALID_CONVERSION');
- const fee=direction==='BUY'?amount.mul(feeRate):amount.mul(price).mul(feeRate);
- const gross=direction==='BUY'?amount.minus(fee):amount.mul(price);
- const bitcoinAmount=(direction==='BUY'?gross.div(price):amount).toDecimalPlaces(quotePrecision,Prisma.Decimal.ROUND_DOWN);
- const netUsd=direction==='BUY'?amount:gross.minus(fee);
+ const feeBase=direction==='BUY'?amount:amount.mul(price).toDecimalPlaces(quotePrecision,Prisma.Decimal.ROUND_DOWN);
+ const fee=feeBase.mul(feeRate).toDecimalPlaces(quotePrecision,Prisma.Decimal.ROUND_DOWN);
+ const grossUsd=direction==='BUY'?amount.minus(fee):feeBase;
+ const bitcoinAmount=(direction==='BUY'?grossUsd.div(price):amount).toDecimalPlaces(quotePrecision,Prisma.Decimal.ROUND_DOWN);
+ const netUsd=direction==='BUY'?amount:grossUsd.minus(fee);
  if(bitcoinAmount.lte(0)||netUsd.lte(0))throw new Error('INVALID_CONVERSION');
- return {bitcoinAmount,fee,netUsd,grossUsd:gross,executionPrice:price};
+ return {bitcoinAmount,fee,netUsd,grossUsd,executionPrice:price};
 }
 
 export async function convertSimulatedBitcoinTx(tx:Prisma.TransactionClient,args:{userId:string;direction:'BUY'|'SELL';amount:Prisma.Decimal;idempotencyKey:string}){

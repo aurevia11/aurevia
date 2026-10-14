@@ -98,7 +98,10 @@ export default function WalletExperience(){
 	const availableMethods=useMemo(()=>methods.filter(method=>type==='DEPOSIT'?method.depositEnabled:method.withdrawalEnabled&&(data.accountMode==='DEMO'||realWithdrawalAvailable)),[methods,type,data.accountMode,realWithdrawalAvailable]);
 	const selectedMethod=availableMethods.find(method=>method.id===methodId);
 	const bitcoinMethod=selectedMethod?selectedMethod.currencies.some(item=>item.toUpperCase()==='BTC')||/\bbitcoin\b|\bbtc\b/i.test(selectedMethod.name):false;
-	const manualRealDeposit=type==='DEPOSIT'&&data.accountMode==='REAL'&&manualDepositReviewAvailable&&availableMethods.length===0;
+	const manualRealRequest=data.accountMode==='REAL'&&realWithdrawalAvailable&&(!availableMethods.length||methodId==='SIMULATED_REAL');
+	const manualRealDeposit=type==='DEPOSIT'&&manualDepositReviewAvailable&&manualRealRequest;
+	const manualRealWithdrawal=type==='WITHDRAWAL'&&manualRealRequest;
+	const manualRealFunding=manualRealDeposit||manualRealWithdrawal;
 	const supportedCurrencies=useMemo(()=>selectedMethod?.currencies||[],[selectedMethod]);
 	const currentBalanceRecord=data.balances.find(item=>item.currency===currency);
 	const currentBalance=currentBalanceRecord?Number(currentBalanceRecord.balance):null;
@@ -181,10 +184,10 @@ export default function WalletExperience(){
 		return ()=>{window.clearInterval(timer);window.removeEventListener('focus',refreshWhenActive);document.removeEventListener('visibilitychange',refreshWhenActive)};
 	},[sessionStatus,load]);
 	useEffect(()=>{
-		if(!availableMethods.some(method=>method.id===methodId))setMethodId(availableMethods[0]?.id||'');
+		if(methodId!=='SIMULATED_REAL'&&!availableMethods.some(method=>method.id===methodId))setMethodId(availableMethods[0]?.id||'');
 	},[availableMethods,methodId]);
 	useEffect(()=>{if(supportedCurrencies.length&&!supportedCurrencies.includes(currency))setCurrency(supportedCurrencies[0])},[supportedCurrencies,currency]);
-	useEffect(()=>{if(manualRealDeposit&&currency!=='USD')setCurrency('USD')},[manualRealDeposit,currency]);
+	useEffect(()=>{if(manualRealFunding&&currency!=='USD')setCurrency('USD')},[manualRealFunding,currency]);
 	useEffect(()=>{
 		if(!selectedMethod?.destination||!bitcoinMethod||type!=='DEPOSIT'){
 			setBitcoinQr('');setBitcoinQrError('');
@@ -204,8 +207,8 @@ export default function WalletExperience(){
 
 	async function submit(event:FormEvent<HTMLFormElement>){
 		event.preventDefault();
-		if(!selectedMethod&&!manualRealDeposit)return;
-		if(type==='DEPOSIT'&&!proofFile){setError(translate('paymentScreenshotRequired'));return;}
+		if(!selectedMethod&&!manualRealFunding)return;
+		if(type==='DEPOSIT'&&selectedMethod&&!proofFile){setError(translate('paymentScreenshotRequired'));return;}
 		const minimumAmount=selectedMethod&&selectedMethod.minimumAmount!==null&&selectedMethod.minimumAmount!==undefined?Number(selectedMethod.minimumAmount):0.01;
 		const minAmount=type==='DEPOSIT'?minimumAmount:undefined;
 		const maxAmount=type==='WITHDRAWAL'?(selectedMethod&&selectedMethod.maximumAmount!==null&&selectedMethod.maximumAmount!==undefined?Number(selectedMethod.maximumAmount):undefined):undefined;
@@ -215,8 +218,8 @@ export default function WalletExperience(){
 	}
 
 	async function confirmSubmit(){
-		if((!selectedMethod&&!manualRealDeposit)||submitting)return;
-		if(type==='DEPOSIT'&&!proofFile){setError(translate('paymentScreenshotRequired'));return;}
+		if((!selectedMethod&&!manualRealFunding)||submitting)return;
+		if(type==='DEPOSIT'&&selectedMethod&&!proofFile){setError(translate('paymentScreenshotRequired'));return;}
 		setSubmitting(true);setError('');
 		const payload={type,...(selectedMethod?{paymentMethodId:selectedMethod.id}:{}),amount:Number(amount),currency,transactionReference:transactionReference||undefined,referenceInfo:referenceInfo||undefined,senderInfo:senderInfo||undefined,destinationInfo:destinationInfo||undefined,beneficiaryInfo:beneficiaryInfo||undefined,network:network||undefined,note:note||undefined};
 		const fingerprint=JSON.stringify(payload);
@@ -224,10 +227,10 @@ export default function WalletExperience(){
 		try{
 			const headers:HeadersInit={'Idempotency-Key':key};
 			let body:BodyInit;
-			if(type==='DEPOSIT'){
+			if(type==='DEPOSIT'&&proofFile){
 				const form=new FormData();
 				form.append('payload',JSON.stringify(payload));
-				form.append('evidence',proofFile!);
+				form.append('evidence',proofFile);
 				body=form;
 			}else{
 				headers['content-type']='application/json';
@@ -272,7 +275,7 @@ export default function WalletExperience(){
 
 	return <><Nav/><main className="account-page">
 		<header className="account-heading"><div><span className="account-kicker">{data.accountMode} ACCOUNT · {translate('walletHeader')}</span><h1>{translate('walletTitle')}</h1><p>{data.accountMode==='DEMO'?translate('walletSubtitle'):translate('realFundingNotice')}</p></div><span className={`status-pill ${data.accountMode==='DEMO'?'mode-demo':'mode-real'}`}>{data.accountMode} ACCOUNT</span></header>
-		{data.accountMode==='REAL'&&!realKycApproved&&<div className="account-callout account-mode-notice"><span>{translate('verificationRequired')}</span><Link className="text-link" href="/kyc">{translate('openVerification')}</Link></div>}
+		{data.accountMode==='REAL'&&type==='DEPOSIT'&&selectedMethod&&!realKycApproved&&<div className="account-callout account-mode-notice"><span>{translate('verificationRequired')}</span><Link className="text-link" href="/kyc">{translate('openVerification')}</Link></div>}
 		{realWithdrawalBlocked&&<div className="account-callout account-mode-notice"><span>{profile?.accountRestricted?translate('accountRestrictedNotice'):translate('withdrawalDisabled')}{profile?.restrictionReason?` ${profile.restrictionReason}`:''}</span><Link className="text-link" href="/support">{translate('contactSupportAction')}</Link></div>}
 		{type==='DEPOSIT'&&profile?.depositEnabled===false&&<div className="account-callout account-mode-notice" role="status"><span>Deposits are disabled for your account. Contact an administrator for assistance.</span></div>}
 		{type==='WITHDRAWAL'&&profile&&!profile.withdrawalEnabled&&!realWithdrawalBlocked&&<div className="account-callout account-mode-notice" role="status"><span>Withdrawals are disabled for your account by an administrator.</span></div>}
@@ -312,30 +315,30 @@ export default function WalletExperience(){
 			<section className="account-panel card p-5"><div className="account-panel-title"><div><h2>{translate('fundingRequest')}</h2><p className="account-panel-subtitle">{translate('fundingRequestSubtitle')}</p></div><WalletCards size={18} className="gold" aria-hidden="true"/></div>
 				{data.accountMode==='DEMO'?<div className="account-callout account-mode-notice mt-4" role="status"><span><strong>DEMO deposits and withdrawals are unavailable.</strong><br/>DEMO balances remain virtual and are for trading simulation only. Select a REAL account for eligible funding workflows.</span></div>:<>
 				<div className="wallet-type-switch" role="group" aria-label={translate('fundingRequestType')}><button type="button" aria-pressed={type==='DEPOSIT'} onClick={()=>{setType('DEPOSIT');setConfirming(false)}}><ArrowDownLeft size={15}/> {translate('deposit')}</button><button type="button" aria-pressed={type==='WITHDRAWAL'} onClick={()=>{setType('WITHDRAWAL');setConfirming(false)}}><ArrowUpRight size={15}/> {translate('withdrawal')}</button></div>
+				<div className="account-callout account-mode-notice mt-3" role="status"><span>REAL-mode funding is a simulated internal ledger workflow. No external deposits or payouts occur, including when a configured payment method is displayed. Administrator review is required before ledger changes.</span></div>
 				<form onSubmit={submit} className="mt-4 space-y-4">
-					{!manualRealDeposit&&<label className="account-label">{translate('paymentMethod')}<select className="input" required value={methodId} onChange={event=>setMethodId(event.target.value)}><option value="">{translate('selectEnabledMethod')}</option>{availableMethods.map(method=><option key={method.id} value={method.id}>{method.name}</option>)}</select></label>}
-					{manualRealDeposit&&<div className="account-callout" role="status"><span>Submit a Real Account deposit request for review. Upload the supporting payment evidence after submitting, and the ledger will be credited only after an administrator approves it.</span></div>}
-					{(selectedMethod||manualRealDeposit)&&<>
-						{manualRealDeposit?<label className="account-label">{translate('currency')}<input className="input" value="USD" readOnly/></label>:<label className="account-label">{translate('currency')}<select className="input" required value={currency} onChange={event=>setCurrency(event.target.value)}>{supportedCurrencies.map(item=><option key={item} value={item}>{item}</option>)}</select></label>}
+					{availableMethods.length>0&&<label className="account-label">{translate('paymentMethod')}<select className="input" required value={methodId} onChange={event=>setMethodId(event.target.value)}><option value="">{translate('selectEnabledMethod')}</option>{availableMethods.map(method=><option key={method.id} value={method.id}>{method.name}</option>)}{data.accountMode==='REAL'&&<option value="SIMULATED_REAL">Simulated internal request (administrator review)</option>}</select></label>}
+					{manualRealFunding&&<div className="account-callout" role="status"><span>Manual simulated requests do not require a payment screenshot. Deposits must be approved; approved withdrawals must be completed by an administrator.</span></div>}
+					{(selectedMethod||manualRealFunding)&&<>
+						{manualRealFunding?<label className="account-label">{translate('currency')}<input className="input" value="USD" readOnly/></label>:<label className="account-label">{translate('currency')}<select className="input" required value={currency} onChange={event=>setCurrency(event.target.value)}>{supportedCurrencies.map(item=><option key={item} value={item}>{item}</option>)}</select></label>}
 						<label className="account-label">{translate('amount',{currency})}<input className="input" type="number" min={type==='DEPOSIT'?'0.00000001':selectedMethod?.minimumAmount||'0.00000001'} max={type==='DEPOSIT'?undefined:selectedMethod?.maximumAmount||undefined} step="any" inputMode="decimal" required value={amount} onChange={event=>setAmount(event.target.value)} placeholder="0.00"/></label>
 						{type==='DEPOSIT'?<>
 							{(selectedMethod?.destination||selectedMethod?.instructions)&&<div className="account-callout deposit-instructions"><div className="min-w-0"><strong>{bitcoinMethod?translate('bitcoinReceivingAddress'):translate('administratorConfiguredPaymentInstructions')}</strong>{selectedMethod.destination&&<p className="mt-2 break-all font-mono text-xs">{selectedMethod.destination}</p>}{selectedMethod.instructions&&<p className="mt-2 text-sm">{selectedMethod.instructions}</p>}{bitcoinQr&&<div className="mt-3 grid w-fit gap-2 rounded-lg bg-white p-3 text-slate-900"><Image unoptimized src={bitcoinQr} alt={translate('bitcoinQrAlt')} width={192} height={192}/><span className="flex items-center gap-2 text-xs font-semibold"><QrCode size={14}/>{translate('scanWithBitcoinWallet')}</span></div>}{bitcoinQrError&&<p className="mt-2 text-sm text-loss" role="alert">{translate('bitcoinQrError')}</p>}</div>{selectedMethod.destination&&<button type="button" className="icon-action" aria-label={translate('copyPaymentDestination')} onClick={()=>void copyDestination()}>{copied?<Check size={15}/>:<Copy size={15}/>}</button>}</div>}
 							<label className="account-label">{data.accountMode==='REAL'?'Internal reference (optional)':translate('externalReference')}<input className="input" maxLength={180} value={transactionReference} onChange={event=>setTransactionReference(event.target.value)} placeholder={data.accountMode==='REAL'?'Optional note/reference for admin review':translate('paymentProviderReference')}/></label>
 							<label className="account-label">{translate('senderReference')}<input className="input" maxLength={500} value={referenceInfo} onChange={event=>setReferenceInfo(event.target.value)} placeholder={translate('providerReference')}/></label>
 							<label className="account-label">{translate('senderInformation')}<input className="input" maxLength={300} value={senderInfo} onChange={event=>setSenderInfo(event.target.value)} placeholder={translate('nameOrAccountDetails')}/></label>
-							<label className="account-label">{translate('paymentScreenshotEvidence')}<input className="input" type="file" accept="image/jpeg,image/png,image/webp" required aria-label={translate('paymentScreenshotEvidence')} onChange={event=>setProofFile(event.target.files?.[0]||null)}/><small className="muted">{translate('screenshotEvidenceHint')}</small></label>
-							<div className="account-callout"><span>{translate('depositEvidenceReviewNotice')}</span></div>
+							{selectedMethod&&<><label className="account-label">{translate('paymentScreenshotEvidence')}<input className="input" type="file" accept="image/jpeg,image/png,image/webp" required aria-label={translate('paymentScreenshotEvidence')} onChange={event=>setProofFile(event.target.files?.[0]||null)}/><small className="muted">{translate('screenshotEvidenceHint')}</small></label><div className="account-callout"><span>{translate('depositEvidenceReviewNotice')}</span></div></>}
 						</>:<>
-							{selectedMethod!.demoOnly?<div className="account-callout"><span>{translate('demoWithdrawalNotice')}</span></div>:<label className="account-label">{translate('destinationAddress')}<input className="input" required maxLength={500} value={destinationInfo} onChange={event=>setDestinationInfo(event.target.value)} placeholder={translate('payoutDestinationPlaceholder')}/></label>}
-							{selectedMethod!.requiresNetwork&&!selectedMethod!.demoOnly&&<label className="account-label">{translate('network')}<input className="input" required maxLength={80} value={network} onChange={event=>setNetwork(event.target.value)} placeholder={translate('destinationNetworkPlaceholder')}/></label>}
+							{selectedMethod?.demoOnly?<div className="account-callout"><span>{translate('demoWithdrawalNotice')}</span></div>:selectedMethod&&<label className="account-label">{translate('destinationAddress')}<input className="input" required maxLength={500} value={destinationInfo} onChange={event=>setDestinationInfo(event.target.value)} placeholder={translate('payoutDestinationPlaceholder')}/></label>}
+							{selectedMethod?.requiresNetwork&&!selectedMethod.demoOnly&&<label className="account-label">{translate('network')}<input className="input" required maxLength={80} value={network} onChange={event=>setNetwork(event.target.value)} placeholder={translate('destinationNetworkPlaceholder')}/></label>}
 							<label className="account-label">{translate('beneficiaryInformation')}<input className="input" maxLength={300} value={beneficiaryInfo} onChange={event=>setBeneficiaryInfo(event.target.value)} placeholder={translate('beneficiaryPlaceholder')}/></label>
 							<div className="account-callout"><span>{translate('availableBalanceMessage',{currency})}: {availableBalance===null?'Unavailable':money(availableBalance,currency)}. {translate('fundsReservedMessage')}</span></div>
 						</>}
 						<label className="account-label">{translate('note')}<textarea className="input min-h-20" maxLength={500} value={note} onChange={event=>setNote(event.target.value)}/></label>
 					</>}
-					{!availableMethods.length&&!manualRealDeposit&&<div className="account-empty" role="status">{methodLoadError||translate('noDepositMethods',{type:type.toLowerCase()})}</div>}
-					{confirming&&(selectedMethod||manualRealDeposit)&&<div className="account-confirm-panel" role="alert"><h3>{translate('confirmRequest',{type:type.toLowerCase()})}</h3><p>{money(Number(amount||0),currency)} via {selectedMethod?.name||'Manual administrator review'} in the {data.accountMode} account. This records a request for review and the ledger is posted only after approval.</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" className="btn bg-gold text-black" disabled={submitting} onClick={()=>void confirmSubmit()}>{submitting?translate('submitRequestStatus'):translate('confirmRequestButton')}</button><button type="button" className="btn bg-white/5" onClick={()=>setConfirming(false)}>{translate('cancelRequestButton')}</button></div></div>}
-					{!confirming&&<button className="btn w-full bg-gold text-black" type="submit" disabled={loading||!hasWalletData||(!selectedMethod&&!manualRealDeposit)||(type==='DEPOSIT'&&(!profile?.depositEnabled||!!profileLoadError))||(data.accountMode==='REAL'&&(!realKycApproved||!!profileLoadError||(type==='DEPOSIT'?(!realFundingAvailable&&!manualDepositReviewAvailable):!realWithdrawalAvailable)))||(type==='WITHDRAWAL'&&(realWithdrawalBlocked||!profile?.withdrawalEnabled||profile.accountRestricted||availableBalance===null||!profile.canWithdraw))}>{type==='DEPOSIT'?translate('reviewDepositRequest'):translate('reviewWithdrawalRequest')}</button>}
+					{!availableMethods.length&&!manualRealFunding&&<div className="account-empty" role="status">{methodLoadError||translate('noDepositMethods',{type:type.toLowerCase()})}</div>}
+					{confirming&&(selectedMethod||manualRealFunding)&&<div className="account-confirm-panel" role="alert"><h3>{translate('confirmRequest',{type:type.toLowerCase()})}</h3><p>{money(Number(amount||0),currency)} via {selectedMethod?.name||(manualRealFunding?'Simulated internal administrator review':'Manual administrator review')} in the {data.accountMode} account. This records a request for review and the ledger is posted only after approval.</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" className="btn bg-gold text-black" disabled={submitting} onClick={()=>void confirmSubmit()}>{submitting?translate('submitRequestStatus'):translate('confirmRequestButton')}</button><button type="button" className="btn bg-white/5" onClick={()=>setConfirming(false)}>{translate('cancelRequestButton')}</button></div></div>}
+					{!confirming&&<button className="btn w-full bg-gold text-black" type="submit" disabled={loading||!hasWalletData||(!selectedMethod&&!manualRealFunding)||(type==='DEPOSIT'&&(!profile?.depositEnabled||!!profileLoadError))||(data.accountMode==='REAL'&&(type==='DEPOSIT'&&selectedMethod&&!realKycApproved||!!profileLoadError||(type==='DEPOSIT'?(!realFundingAvailable&&!manualDepositReviewAvailable):!realWithdrawalAvailable)))||(type==='WITHDRAWAL'&&(realWithdrawalBlocked||!profile?.withdrawalEnabled||profile.accountRestricted||availableBalance===null||(!manualRealWithdrawal&&!profile.canWithdraw)))}>{type==='DEPOSIT'?translate('reviewDepositRequest'):translate('reviewWithdrawalRequest')}</button>}
 				</form>
 				</>}
 			</section>

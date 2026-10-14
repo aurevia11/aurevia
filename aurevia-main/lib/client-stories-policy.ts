@@ -1,7 +1,7 @@
 type WithdrawalCandidate={userId:string;type:string;accountMode:string;status:string;settlementReference:string|null;settledAt:Date|null};
 
 export function isVerifiedClientWithdrawal(withdrawal:WithdrawalCandidate|null,userId:string|null){
-	return Boolean(withdrawal&&userId&&withdrawal.userId===userId&&withdrawal.type==='WITHDRAWAL'&&withdrawal.accountMode==='REAL'&&withdrawal.status==='COMPLETED'&&withdrawal.settlementReference&&withdrawal.settledAt);
+	return Boolean(withdrawal&&userId&&withdrawal.userId===userId&&withdrawal.type==='WITHDRAWAL'&&withdrawal.accountMode==='REAL'&&withdrawal.status==='COMPLETED'&&withdrawal.settlementReference&&!withdrawal.settlementReference.startsWith('SIMULATED-')&&withdrawal.settledAt);
 }
 
 export function canPublishClientStory(input:{userId:string|null;verifiedClient:boolean;transactionVerified:boolean;consentConfirmed:boolean}){

@@ -38,6 +38,13 @@ describe('production account policy',()=>{
     expect(()=>validateWithdrawal({balance:'100',pending:'0',amount:'20',withdrawalEnabled:true,kycStatus:KycStatus.APPROVED,hasCompletedInvestment:false})).toThrow('FIRST_TRADE_REQUIRED');
   });
 
+  it('allows simulated REAL withdrawals without KYC or a prior investment while retaining account and balance controls',()=>{
+    expect(()=>validateWithdrawal({balance:'100',pending:'10',amount:'20',withdrawalEnabled:true,kycStatus:KycStatus.PENDING,hasCompletedInvestment:false,simulated:true})).not.toThrow();
+    expect(()=>validateWithdrawal({balance:'100',pending:'0',amount:'20',withdrawalEnabled:false,kycStatus:KycStatus.PENDING,simulated:true})).toThrow('WITHDRAWAL_DISABLED');
+    expect(()=>validateWithdrawal({balance:'100',pending:'0',amount:'20',withdrawalEnabled:true,accountRestricted:true,kycStatus:KycStatus.PENDING,simulated:true})).toThrow('ACCOUNT_RESTRICTED');
+    expect(()=>validateWithdrawal({balance:'100',pending:'10',amount:'91',withdrawalEnabled:true,kycStatus:KycStatus.PENDING,simulated:true})).toThrow('INSUFFICIENT_BALANCE');
+  });
+
   it('requires an exact deposit credit match before approval',()=>{
     expect(()=>validateDepositApproval('100.00','90.00')).toThrow('DEPOSIT_AMOUNT_MISMATCH');
     expect(()=>validateDepositApproval('100.00','100.00')).not.toThrow();

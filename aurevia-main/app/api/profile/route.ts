@@ -51,7 +51,7 @@ export async function GET(){
 			(db as any).investmentRequest?.findFirst?.({where:{userId:user.id,accountMode:user.accountMode,status:{in:[InvestmentStatus.COMPLETED,InvestmentStatus.SETTLED]}},select:{id:true}}) ?? null,
 		]);
 		if(!profile)return NextResponse.json({error:'Profile not found.'},{status:404});
-		return NextResponse.json({...profileResponse(profile),canWithdraw:Boolean(completedInvestment)},{headers:{'Cache-Control':'private, no-store'}});
+		return NextResponse.json({...profileResponse(profile),canWithdraw:profile.accountMode===AccountMode.REAL||Boolean(completedInvestment)},{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){
 		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
 		console.error('[profile] Read failed',safeErrorDetails(error));

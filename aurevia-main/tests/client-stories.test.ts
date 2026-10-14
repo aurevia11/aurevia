@@ -18,6 +18,7 @@ describe('client story publication safeguards',()=>{
 		expect(isVerifiedClientWithdrawal({...withdrawal,accountMode:'DEMO'},'user-1')).toBe(false);
 		expect(isVerifiedClientWithdrawal({...withdrawal,status:'APPROVED'},'user-1')).toBe(false);
 		expect(isVerifiedClientWithdrawal({...withdrawal,settlementReference:null},'user-1')).toBe(false);
+		expect(isVerifiedClientWithdrawal({...withdrawal,settlementReference:'SIMULATED-test'},'user-1')).toBe(false);
 		expect(isVerifiedClientWithdrawal({...withdrawal,settledAt:null},'user-1')).toBe(false);
 	});
 

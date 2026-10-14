@@ -723,7 +723,7 @@ test('account-mode changes refresh and isolate wallet, trade, history, and suppo
 	await expect(page.getByRole('button').filter({hasText:subject})).toBeVisible();
 });
 
-test('REAL provider status is admin-only, configured deposit credits work, and withdrawals remain provider-gated',async({browser,page})=>{
+test('REAL simulated deposits and withdrawals require review and settle in the internal ledger',async({browser,page})=>{
 	await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
 	expect((await page.request.get('/api/admin/providers/status')).status()).toBe(403);
 	expect((await page.request.post('/api/webhooks/broker/unconfigured',{data:{eventId:'synthetic-test-event'}})).status()).toBe(503);
@@ -751,28 +751,44 @@ test('REAL provider status is admin-only, configured deposit credits work, and w
 		expect(JSON.stringify(status)).not.toContain('://');
 
 		const prooflessDepositApproval=await adminPage.request.patch('/api/admin/funding',{data:{id:fixture('REAL_DEPOSIT_NO_PROOF_ID'),decision:'APPROVED'}});
-		expect(prooflessDepositApproval.status()).toBe(409);
-		expect((await prooflessDepositApproval.json()).error).toContain('Upload and review payment evidence');
+		expect(prooflessDepositApproval.status()).toBe(200);
+		expect(Number((await prooflessDepositApproval.json()).creditedAmount)).toBe(75);
 		const depositApproval=await adminPage.request.patch('/api/admin/funding',{data:{id:fixture('REAL_DEPOSIT_ID'),decision:'APPROVED'}});
 		expect(depositApproval.status()).toBe(200);
 		expect(Number((await depositApproval.json()).creditedAmount)).toBe(125);
 		const withdrawalApproval=await adminPage.request.patch('/api/admin/funding',{data:{id:fixture('REAL_WITHDRAWAL_ID'),decision:'APPROVED'}});
-		expect(withdrawalApproval.status()).toBe(409);
-		expect((await withdrawalApproval.json()).error).toBe('REAL_WITHDRAWAL_PROVIDER_UNAVAILABLE');
-		const settlement=await adminPage.request.post('/api/admin/funding/settle',{data:{id:fixture('REAL_WITHDRAWAL_ID'),settlementReference:'TEST-REFERENCE'}});
-		expect(settlement.status()).toBe(503);
-		expect((await settlement.json()).error).toBe('REAL_WITHDRAWAL_PROVIDER_UNAVAILABLE');
+		expect(withdrawalApproval.status()).toBe(200);
+		expect((await withdrawalApproval.json()).status).toBe('APPROVED');
+		const settlement=await adminPage.request.post('/api/admin/funding/settle',{data:{id:fixture('REAL_WITHDRAWAL_ID'),note:'Complete simulated withdrawal for workflow test'}});
+		expect(settlement.status()).toBe(200);
+		expect(await settlement.json()).toMatchObject({status:'COMPLETED',settlementReference:expect.stringMatching(/^SIMULATED-/)});
 		const fundingHistory=await adminPage.request.get('/api/admin/funding?history=true').then(response=>response.json());
 		expect(fundingHistory.find((row:{id:string})=>row.id===fixture('REAL_DEPOSIT_ID'))).toMatchObject({status:'APPROVED',accountMode:'REAL',creditedAmount:'125'});
-		expect(fundingHistory.find((row:{id:string})=>row.id===fixture('REAL_WITHDRAWAL_ID'))).toMatchObject({status:'PENDING_REVIEW',settlementReference:null,settledAt:null});
+		expect(fundingHistory.find((row:{id:string})=>row.id===fixture('REAL_WITHDRAWAL_ID'))).toMatchObject({status:'COMPLETED',accountMode:'REAL',settledAt:expect.any(String)});
 	}finally{await adminContext.close();}
 
-	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(125);
+	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(175);
+	const withdrawal=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'WITHDRAWAL',amount:10,currency:'USD'}});
+	expect(withdrawal.status()).toBe(201);
+	expect((await withdrawal.json()).method).toBe('Simulated REAL withdrawal');
+	const withdrawalAdminContext=await browser.newContext();
+	try{
+		const adminPage=await withdrawalAdminContext.newPage();
+		await loginAs(adminPage,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
+		const submitted=await withdrawal.json();
+		const approval=await adminPage.request.patch('/api/admin/funding',{data:{id:submitted.id,decision:'APPROVED'}});
+		expect(approval.status()).toBe(200);
+		expect((await page.request.get('/api/wallet').then(response=>response.json())).transactions.find((item:{id:string})=>item.id===submitted.id)).toMatchObject({status:'APPROVED'});
+		const settlement=await adminPage.request.post('/api/admin/funding/settle',{data:{id:submitted.id}});
+		expect(settlement.status()).toBe(200);
+		expect((await settlement.json()).status).toBe('COMPLETED');
+	}finally{await withdrawalAdminContext.close();}
+	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(165);
 	await selectAccountMode(page,'DEMO');
 	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(10000);
 });
 
-test('Account Funding loads its wallet independently and clearly blocks unconfigured REAL funding',async({page})=>{
+test('Account Funding loads its wallet independently and offers reviewed simulated REAL funding',async({page})=>{
 	await page.setViewportSize({width:390,height:844});
 	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
 	await selectAccountMode(page,'DEMO');
@@ -803,10 +819,10 @@ test('Account Funding loads its wallet independently and clearly blocks unconfig
 	await selectAccountMode(page,'REAL');
 	await page.goto('/wallet');
 	const methods=await page.request.get('/api/payment-methods').then(response=>response.json());
-	expect(methods).toMatchObject({methods:[],fundingStatus:'NOT_CONFIGURED',realFundingAvailable:false,manualDepositReviewAvailable:true});
-	await expect(page.getByText(/Submit a Real Account deposit request for review/)).toBeVisible();
+	expect(methods).toMatchObject({methods:[],fundingStatus:'MANUAL_REVIEW',realFundingAvailable:true,realWithdrawalAvailable:true,manualDepositReviewAvailable:true});
+	await expect(page.getByText(/REAL-mode funding is a simulated internal ledger workflow/i)).toBeVisible();
 	await expect(page.getByLabel('Amount',{exact:true})).toBeVisible();
-	await expect(page.getByRole('button',{name:/Review deposit request/i})).toBeDisabled();
+	await expect(page.getByRole('button',{name:/Review deposit request/i})).toBeEnabled();
 	await expect(page.getByRole('alert').filter({hasText:'Wallet data is temporarily unavailable'})).toHaveCount(0);
 	for(const width of [320,375,390,430,1440]){
 		await page.setViewportSize({width,height:900});
@@ -1074,20 +1090,20 @@ test('simulated investment lifecycle and trading work in both account modes',asy
 		const realAllocation=await adminPage.request.post('/api/admin/balances',{data:{userId:investorId,accountMode:'REAL',currency:'USD',amount:'1000.00',direction:'CREDIT',category:'ADMIN_ALLOCATION',reason:'Simulated REAL-mode investment and trading test allocation',idempotencyKey:randomUUID()}});
 		expect(realAllocation.status()).toBe(201);
 			const unavailableMethods=await page.request.get('/api/payment-methods').then(response=>response.json());
-				expect(unavailableMethods).toMatchObject({methods:[],fundingStatus:'NOT_CONFIGURED',realFundingAvailable:false,manualDepositReviewAvailable:true});
+				expect(unavailableMethods).toMatchObject({methods:[],fundingStatus:'MANUAL_REVIEW',realFundingAvailable:true,realWithdrawalAvailable:true,manualDepositReviewAvailable:true});
 			const existingFunding=await page.request.get('/api/wallet').then(response=>response.json());
 			const blockedFunding=await page.request.post('/api/wallet',depositPostOptions(randomUUID(),{type:'DEPOSIT',paymentMethodId:'not-configured',amount:10,currency:'USD',transactionReference:`E2E-${randomUUID()}`}));
 			expect(blockedFunding.status()).toBe(400);
 			expect((await blockedFunding.json()).error).toBe('payment method unavailable');
 			expect(await page.request.get('/api/wallet').then(async response=>(await response.json()).transactions.length)).toBe(existingFunding.transactions.length);
-			const manualRequestResponse=await page.request.post('/api/wallet',depositPostOptions(randomUUID(),{type:'DEPOSIT',amount:10,currency:'USD',transactionReference:`MANUAL-${randomUUID()}`}));
+			const manualRequestResponse=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'DEPOSIT',amount:10,currency:'USD',transactionReference:`MANUAL-${randomUUID()}`}});
 			expect(manualRequestResponse.status()).toBe(201);
 			const manualRequest=await manualRequestResponse.json();
-			expect(manualRequest).toMatchObject({method:'Manual admin review',paymentMethodId:null,status:'PENDING_REVIEW',accountMode:'REAL',hasReceipt:true});
+			expect(manualRequest).toMatchObject({method:'Simulated REAL deposit',paymentMethodId:null,status:'PENDING_REVIEW',accountMode:'REAL',hasReceipt:false});
 			await page.goto('/wallet');
-			await expect(page.getByText(/Submit a Real Account deposit request for review/)).toBeVisible();
+			await expect(page.getByText(/REAL-mode funding is a simulated internal ledger workflow/i)).toBeVisible();
 			await expect(page.getByLabel('Amount',{exact:true})).toBeVisible();
-			await expect(page.getByRole('link',{name:/DEPOSIT Manual admin review/})).toBeVisible();
+			await expect(page.locator('.transaction-method').filter({hasText:'Simulated Real Account deposit'})).toBeVisible();
 		await page.goto('/investments');
 		await expect(page.getByText(/REAL investment activity is simulated/i)).toBeVisible();
 		const realRequestResponse=await page.request.post('/api/investments',{headers:{'Idempotency-Key':randomUUID()},data:{opportunityId:opportunity.id,amount:500}});
@@ -1593,19 +1609,18 @@ test('administrator market tick is protected, deterministic, and idempotent',asy
 	}finally{await adminContext.close();}
 });
 
-test('wallet deposit form submits a private screenshot with the review request',async({page})=>{
+test('wallet manual REAL deposit request does not require an external payment screenshot',async({page})=>{
 	await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
 	await selectAccountMode(page,'REAL');
 	await page.goto('/wallet');
-	await expect(page.getByText(/Submit a Real Account deposit request for review/)).toBeVisible();
+	await expect(page.getByText(/simulated internal ledger workflow/i)).toBeVisible();
 	await page.getByLabel('Amount',{exact:true}).fill('35');
-	await page.getByLabel('Payment screenshot evidence').setInputFiles({name:'payment.png',mimeType:'image/png',buffer:PNG.sync.write(new PNG({width:1,height:1}))});
 	await page.getByRole('button',{name:'Review deposit request'}).click();
 	await expect(page.getByRole('heading',{name:'Confirm deposit request'})).toBeVisible();
 	await page.getByRole('button',{name:'Confirm request'}).click();
 	await expect(page.getByRole('status').filter({hasText:'submitted for administrator review'})).toBeVisible();
 	const wallet=await page.request.get('/api/wallet').then(response=>response.json());
-	expect(wallet.transactions[0]).toMatchObject({type:'DEPOSIT',status:'PENDING_REVIEW',hasReceipt:true});
+	expect(wallet.transactions[0]).toMatchObject({type:'DEPOSIT',status:'PENDING_REVIEW',hasReceipt:false,method:'Simulated REAL deposit'});
 });
 
 test('configured Bitcoin methods show their address and a locally generated QR code',async({browser,page})=>{

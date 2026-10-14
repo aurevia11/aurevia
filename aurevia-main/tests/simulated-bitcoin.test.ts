@@ -21,6 +21,13 @@ describe('simulated Bitcoin conversion arithmetic',()=>{
 		expect(result.bitcoinAmount.toFixed(3)).toBe('0.001');
 	});
 
+	it('keeps ledger-sized USD conversion amounts exactly balanced after precision rounding',()=>{
+		const sale=calculateSimulatedBitcoinConversion('SELL',new D('0.0007673846'),new D('65085.123456789'),new D('0.0015'));
+		expect(sale.netUsd.plus(sale.fee).eq(sale.grossUsd)).toBe(true);
+		const purchase=calculateSimulatedBitcoinConversion('BUY',new D('100.0000000000'),new D('65085.123456789'),new D('0.0015'));
+		expect(purchase.grossUsd.plus(purchase.fee).eq(purchase.netUsd)).toBe(true);
+	});
+
 	it.each([
 		{direction:'BUY' as const,amount:new D(0),price:new D(92500),feeRate:new D('0.001')},
 		{direction:'SELL' as const,amount:new D('0.1'),price:new D(0),feeRate:new D('0.001')},

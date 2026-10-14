@@ -1,5 +1,5 @@
 import {NextResponse} from 'next/server';
-import {AccountMode,Prisma,FundingStatus,FundingType,InvestmentStatus,NotificationType,KycStatus} from '@prisma/client';
+import {AccountMode,Prisma,FundingStatus,FundingType,NotificationType} from '@prisma/client';
 import {z,ZodError} from 'zod';
 import {requireUser} from '@/lib/auth';
 import {db} from '@/lib/db';
@@ -9,7 +9,6 @@ import {createNotification} from '@/lib/notifications';
 import {notifyActiveAdmins} from '@/lib/notifications';
 import {sendSupportEmail} from '@/lib/email';
 import {validateWithdrawal} from '@/lib/production-policy';
-import {getFundingProviderReadiness} from '@/lib/providers/funding-provider';
 import {FundingEvidenceError,maxFundingEvidenceBytes,validateFundingEvidence} from '@/lib/funding-evidence';
 import {createPrivateObjectKey,deletePrivateObject,PrivateStorageError,uploadPrivateObject} from '@/lib/private-storage';
 
@@ -86,7 +85,7 @@ export async function POST(req:Request){
 			const access=await db.user.findUniqueOrThrow({where:{id:user.id},select:{depositEnabled:true}});
 			if(!access.depositEnabled)throw new Error('DEPOSITS_DISABLED');
 		}
-		if(parsed.type===FundingType.DEPOSIT){
+		if(parsed.type===FundingType.DEPOSIT&&parsed.paymentMethodId){
 			if(!evidenceFile)return NextResponse.json({error:'Attach a payment screenshot before submitting a deposit request.'},{status:400});
 			if(evidenceFile.size===0)throw new FundingEvidenceError('Choose a non-empty evidence file.',400);
 			if(evidenceFile.size>maxFundingEvidenceBytes)throw new FundingEvidenceError('Evidence must be 5 MB or smaller.',413);
@@ -101,10 +100,6 @@ export async function POST(req:Request){
 			if(!controls.withdrawalEnabled)throw new Error('WITHDRAWAL_DISABLED');
 			if(controls.accountRestricted)throw new Error('ACCOUNT_RESTRICTED');
 		}
-		if(user.accountMode==='REAL'&&parsed.type==='WITHDRAWAL'){
-			const funding=await getFundingProviderReadiness();
-			if(!funding.workflowEnabled)return NextResponse.json({error:'REAL_FUNDING_PROVIDER_UNAVAILABLE'},{status:503,headers:{'Cache-Control':'private, no-store'}});
-		}
 		const currency=parsed.currency.toUpperCase();
 
 		const result=await db.$transaction(async tx=>{
@@ -113,37 +108,35 @@ export async function POST(req:Request){
 				if(duplicate.userId!==user.id||duplicate.accountMode!==user.accountMode||duplicate.type!==parsed.type||!duplicate.amount.equals(parsed.amount)||duplicate.currency!==currency||duplicate.paymentMethodId!==(parsed.paymentMethodId||null))throw new Error('IDEMPOTENCY_KEY_REUSED');
 				return {request:duplicate,replay:true};
 			}
-			const fundingUser=await tx.user.findUniqueOrThrow({where:{id:user.id},select:{kycStatus:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true},take:1}}});
+			const fundingUser=await tx.user.findUniqueOrThrow({where:{id:user.id},select:{kycStatus:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true}});
 			if(parsed.type==='DEPOSIT'&&!fundingUser.depositEnabled)throw new Error('DEPOSITS_DISABLED');
 			if(parsed.type==='WITHDRAWAL'&&!fundingUser.withdrawalEnabled)throw new Error('WITHDRAWAL_DISABLED');
 			if(parsed.type==='WITHDRAWAL'&&fundingUser.accountRestricted)throw new Error('ACCOUNT_RESTRICTED');
-			if(user.accountMode==='REAL'&&(fundingUser.kycStatus!==KycStatus.APPROVED||!fundingUser.kyc?.submittedAt||fundingUser.kycDocuments.length===0))throw new Error('REAL_KYC_REQUIRED');
-			const completedInvestment=await tx.investmentRequest?.findFirst?.({where:{userId:user.id,accountMode:user.accountMode,status:{in:[InvestmentStatus.COMPLETED,InvestmentStatus.SETTLED]}},select:{id:true}}) ?? null;
+			if(user.accountMode==='REAL'&&parsed.type==='DEPOSIT'&&parsed.paymentMethodId&&fundingUser.kycStatus!=='APPROVED')throw new Error('REAL_KYC_REQUIRED');
 			const method=parsed.paymentMethodId?await tx.paymentMethod.findUnique({where:{id:parsed.paymentMethodId}}):null;
-			const manualRealDeposit=user.accountMode==='REAL'&&parsed.type==='DEPOSIT'&&!parsed.paymentMethodId;
+			const manualRealRequest=user.accountMode==='REAL'&&!parsed.paymentMethodId;
 			const methodEnabled=!!method?.enabled&&(parsed.type==='DEPOSIT'?method.depositEnabled:method.withdrawalEnabled);
 			const correctMode=method?.demoOnly===(user.accountMode==='DEMO');
-			if(!manualRealDeposit&&(!method||!methodEnabled||!method.currencies.includes(currency)||!correctMode))throw new Error('PAYMENT_METHOD_UNAVAILABLE');
+			if(!manualRealRequest&&(!method||!methodEnabled||!method.currencies.includes(currency)||!correctMode))throw new Error('PAYMENT_METHOD_UNAVAILABLE');
 			const amount=new Prisma.Decimal(parsed.amount);
 			if(parsed.type==='WITHDRAWAL'&&method&&(amount.lt(method.minimumAmount)||(method.maximumAmount&&amount.gt(method.maximumAmount))))throw new Error('AMOUNT_OUT_OF_RANGE');
 			if(parsed.type==='DEPOSIT'&&method&&!method.demoOnly&&!method.destination&&!method.instructions)throw new Error('PAYMENT_INSTRUCTIONS_UNAVAILABLE');
 			if(parsed.type==='WITHDRAWAL'){
-				const withdrawalMethod=method!;
-				if(!completedInvestment)throw new Error('FIRST_TRADE_REQUIRED');
-				if(!withdrawalMethod.demoOnly&&!parsed.destinationInfo)throw new Error('WITHDRAWAL_DESTINATION_REQUIRED');
-				if(!withdrawalMethod.demoOnly&&withdrawalMethod.requiresNetwork&&!parsed.network)throw new Error('WITHDRAWAL_NETWORK_REQUIRED');
+				if(!method&&user.accountMode!==AccountMode.REAL)throw new Error('PAYMENT_METHOD_UNAVAILABLE');
+				if(method&&!method.demoOnly&&!parsed.destinationInfo)throw new Error('WITHDRAWAL_DESTINATION_REQUIRED');
+				if(method&&!method.demoOnly&&method.requiresNetwork&&!parsed.network)throw new Error('WITHDRAWAL_NETWORK_REQUIRED');
 				const code=`USER:${user.id}:${user.accountMode}:${currency}`;
 				const account=await tx.ledgerAccount.findUnique({where:{code}});
 				const currentBalance=account?await balance(tx,account.id):new Prisma.Decimal(0);
 				const pending=await tx.fundingRequest.aggregate({where:{userId:user.id,accountMode:user.accountMode,currency,type:FundingType.WITHDRAWAL,status:{in:reservingStatuses}},_sum:{amount:true}});
 				const reserved=pending._sum.amount??new Prisma.Decimal(0);
-				if(user.accountMode==='REAL')validateWithdrawal({balance:currentBalance.toString(),pending:reserved.toString(),amount:amount.toString(),withdrawalEnabled:fundingUser.withdrawalEnabled,accountRestricted:fundingUser.accountRestricted,kycStatus:fundingUser.kycStatus,hasCompletedInvestment:true});
+				if(user.accountMode==='REAL')validateWithdrawal({balance:currentBalance.toString(),pending:reserved.toString(),amount:amount.toString(),withdrawalEnabled:fundingUser.withdrawalEnabled,accountRestricted:fundingUser.accountRestricted,kycStatus:fundingUser.kycStatus,simulated:true});
 				else if(currentBalance.lt(amount.plus(reserved)))throw new Error('INSUFFICIENT_AVAILABLE_BALANCE');
 			}
 			const request=await tx.fundingRequest.create({data:{
 				userId:user.id,
 				type:parsed.type,
-				method:method?.name||'Manual admin review',
+				method:method?.name||(user.accountMode===AccountMode.REAL?`Simulated REAL ${parsed.type.toLowerCase()}`:'Manual admin review'),
 				amount,
 				currency,
 				status:FundingStatus.PENDING_REVIEW,
@@ -162,8 +155,9 @@ export async function POST(req:Request){
 			await tx.auditLog.create({data:{actorId:user.id,action:'FUNDING_SUBMITTED',entity:'FUNDING',entityId:request.id,metadata:{type:request.type,accountMode:request.accountMode,currency:request.currency,amount:request.amount.toString(),hasEvidence:!!receiptKey}}});
 			if(receiptKey)await tx.auditLog.create({data:{actorId:user.id,action:'PAYMENT_RECEIPT_UPLOADED',entity:'FUNDING',entityId:request.id,metadata:{accountMode:request.accountMode,...evidenceMetadata}}});
 			const notificationType=request.type===FundingType.DEPOSIT?NotificationType.DEPOSIT:NotificationType.WITHDRAWAL;
-			await createNotification(tx,{userId:user.id,type:notificationType,title:`${request.type==='DEPOSIT'?'Deposit':'Withdrawal'} submitted`,message:`Your ${request.type.toLowerCase()} request is pending administrator review. No transfer has been confirmed.`,dedupeKey:`funding:${request.id}:submitted`,relatedEntity:'FUNDING',relatedId:request.id,actionUrl:`/wallet/transactions/${request.id}`});
-			await notifyActiveAdmins(tx,{type:notificationType,title:`New ${request.type.toLowerCase()} request`,message:`A ${request.accountMode.toLowerCase()} ${request.type.toLowerCase()} request is awaiting review${receiptKey?' with payment evidence':''}. No payment is confirmed.`,dedupeKey:`funding:${request.id}:admin`,relatedEntity:'FUNDING',relatedId:request.id,actionUrl:'/admin'});
+			const disclosure=request.accountMode===AccountMode.REAL?' This is a simulated ledger request; no external money moves.':'';
+			await createNotification(tx,{userId:user.id,type:notificationType,title:`${request.type==='DEPOSIT'?'Deposit':'Withdrawal'} submitted`,message:`Your ${request.type.toLowerCase()} request is pending administrator review. No transfer has been confirmed.${disclosure}`,dedupeKey:`funding:${request.id}:submitted`,relatedEntity:'FUNDING',relatedId:request.id,actionUrl:`/wallet/transactions/${request.id}`});
+			await notifyActiveAdmins(tx,{type:notificationType,title:`New ${request.type.toLowerCase()} request`,message:`A ${request.accountMode.toLowerCase()} ${request.type.toLowerCase()} request is awaiting review${receiptKey?' with payment evidence':''}.${request.accountMode===AccountMode.REAL?' This is simulated; no external money moves.':' No payment is confirmed.'}`,dedupeKey:`funding:${request.id}:admin`,relatedEntity:'FUNDING',relatedId:request.id,actionUrl:'/admin'});
 			return {request,replay:false};
 		},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
 		if(result.replay&&receiptKey)await deletePrivateObject('receipt',user.id,receiptKey);
