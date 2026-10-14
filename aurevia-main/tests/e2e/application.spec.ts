@@ -729,6 +729,24 @@ test('REAL simulated deposits and withdrawals require review and settle in the i
 	expect((await page.request.post('/api/webhooks/broker/unconfigured',{data:{eventId:'synthetic-test-event'}})).status()).toBe(503);
 	await selectAccountMode(page,'REAL');
 	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(0);
+	const previousGbpRate=await db.exchangeRate.findUnique({where:{baseCurrency_quoteCurrency:{baseCurrency:'USD',quoteCurrency:'GBP'}}});
+	try{
+		await db.exchangeRate.upsert({
+			where:{baseCurrency_quoteCurrency:{baseCurrency:'USD',quoteCurrency:'GBP'}},
+			create:{baseCurrency:'USD',quoteCurrency:'GBP',rate:'0.8',source:'E2E configured rate',observedAt:new Date()},
+			update:{rate:'0.8',source:'E2E configured rate',observedAt:new Date()},
+		});
+		await page.request.patch('/api/currency-preference',{data:{currency:'GBP'}});
+		const configuredRate=await page.request.get('/api/currency-rates?to=GBP').then(response=>response.json());
+		expect(configuredRate).toMatchObject({rate:'0.8',source:'E2E configured rate',status:'CURRENT'});
+		await page.goto('/wallet');
+		await expect(page.getByText('Exchange rate: 1 USD = 0.8 GBP')).toBeVisible();
+		await expect(page.getByText(/Approximate display: £0\.00/)).toBeVisible();
+	}finally{
+		await page.request.patch('/api/currency-preference',{data:{currency:'USD'}});
+		if(previousGbpRate)await db.exchangeRate.update({where:{baseCurrency_quoteCurrency:{baseCurrency:'USD',quoteCurrency:'GBP'}},data:{rate:previousGbpRate.rate,source:previousGbpRate.source,observedAt:previousGbpRate.observedAt}});
+		else await db.exchangeRate.deleteMany({where:{baseCurrency:'USD',quoteCurrency:'GBP'}});
+	}
 	const instruments=await page.request.get('/api/market').then(response=>response.json());
 	const blockedOrder=await page.request.post('/api/orders',{headers:{'Idempotency-Key':randomUUID()},data:{instrumentId:instruments[0].id,side:'BUY',type:'MARKET',quantity:1,expectedPrice:Number(instruments[0].price),observedAt:instruments[0].lastUpdatedAt||instruments[0].updatedAt}});
 	expect(blockedOrder.status()).toBe(400);

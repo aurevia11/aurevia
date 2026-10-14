@@ -39,7 +39,11 @@ export async function GET(request:Request){
 				}
 			}
 		}
-		if(cached)return NextResponse.json({baseCurrency:'USD',quoteCurrency:to,rate:cached.rate,source:cached.source,observedAt:cached.observedAt,status:'STALE'},{headers:{'Cache-Control':'private, no-store'}});
+		if(cached){
+			const age=Date.now()-cached.observedAt.getTime();
+			const current=Number.isFinite(age)&&age>=-5_000&&age<=maxRateAgeMs;
+			return NextResponse.json({baseCurrency:'USD',quoteCurrency:to,rate:cached.rate,source:cached.source,observedAt:cached.observedAt,status:current?'CURRENT':'STALE'},{headers:{'Cache-Control':'private, no-store'}});
+		}
 		return NextResponse.json({baseCurrency:'USD',quoteCurrency:to,rate:null,source:null,observedAt:null,status:'UNAVAILABLE'},{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){
 		if(error instanceof ZodError)return NextResponse.json({error:'Unsupported display currency.'},{status:400});

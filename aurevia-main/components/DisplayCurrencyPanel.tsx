@@ -12,6 +12,7 @@ export default function DisplayCurrencyPanel({values}:Props){
 	const [rate,setRate]=useState<Rate|null>(null);
 	const [error,setError]=useState('');
 	const [ready,setReady]=useState(false);
+	const currentRate=rate?.status==='CURRENT'&&rate.rate!==null&&Number.isFinite(Number(rate.rate))&&Number(rate.rate)>0?Number(rate.rate):null;
 	useEffect(()=>{
 		let active=true;
 		void fetch('/api/currency-preference',{cache:'no-store'}).then(async response=>{
@@ -49,8 +50,8 @@ export default function DisplayCurrencyPanel({values}:Props){
 			<div className="text-sm" aria-live="polite">
 				{currency==='USD'
 					?<p>Balances remain recorded in USD. Changing this preference never exchanges funds.</p>
-					:rate?.status==='CURRENT'&&rate.rate
-						?<><div className="grid gap-1 sm:grid-cols-2">{values.map(({label,amount})=><p key={label}><span className="muted">{label}: </span>{amount===null?'Unavailable':`${money(Number(amount)*Number(rate.rate),currency)} approximate`} <span className="text-xs muted">(original: {amount===null?'Unavailable':money(Number(amount),'USD')})</span></p>)}</div><p className="mt-2 text-xs muted">Display conversion only · {rate.source} · updated {rate.observedAt?new Date(rate.observedAt).toLocaleString():'time unavailable'}</p></>
+					:currentRate!==null
+						?<><p>Exchange rate: 1 USD = {currentRate.toLocaleString(undefined,{maximumSignificantDigits:10})} {currency}</p><div className="grid gap-1 sm:grid-cols-2">{values.map(({label,amount})=><p key={label}><span className="muted">{label}: </span>{amount===null?'Unavailable':`${money(Number(amount)*currentRate,currency)} approximate`} <span className="text-xs muted">(original: {amount===null?'Unavailable':money(Number(amount),'USD')})</span></p>)}</div><p className="mt-2 text-xs muted">Display conversion only · {rate?.source} · updated {rate?.observedAt?new Date(rate.observedAt).toLocaleString():'time unavailable'}</p></>
 						:<p className="text-xs text-amber-200">{rate?.status==='STALE'?'The exchange rate is stale; converted amounts are hidden.':rate===null&&!error?'Loading configured exchange rate…':error||'A current configured exchange rate is unavailable; converted amounts are hidden.'}</p>}
 				{error&&<p className="mt-1 text-xs text-loss" role="alert">{error}</p>}
 			</div>
