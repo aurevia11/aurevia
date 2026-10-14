@@ -66,11 +66,11 @@ export const TIMEFRAMES = [
   {id:'5d',label:'5d',range:'5d',interval:'5m'},
   {id:'1m',label:'1m',range:'1mo',interval:'30m'},
   {id:'3m',label:'3M',range:'3mo',interval:'1d'},
-  {id:'ytd',label:'Año actual',range:'ytd',interval:'1d'},
-  {id:'1y',label:'1a',range:'1y',interval:'1d'},
-  {id:'3y',label:'3A',range:'5y',interval:'1wk'},
-  {id:'5y',label:'5a',range:'5y',interval:'1wk'},
-  {id:'max',label:'Máx.',range:'max',interval:'1mo'},
+  {id:'ytd',label:'YTD',range:'ytd',interval:'1d'},
+  {id:'1y',label:'1Y',range:'1y',interval:'1d'},
+  {id:'3y',label:'3Y',range:'5y',interval:'1wk'},
+  {id:'5y',label:'5Y',range:'5y',interval:'1wk'},
+  {id:'max',label:'MAX',range:'max',interval:'1mo'},
 ] as const;
 
 export type TimeframeId = (typeof TIMEFRAMES)[number]['id'];

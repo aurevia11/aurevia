@@ -19,7 +19,7 @@ type MarketWatchlistState={
   reorderSymbol:(from:string,to:string)=>void;
 };
 
-const initialWatchlist:MarketWatchlist={id:'market-default',name:'Mi lista de control',symbols:DEFAULT_WATCHLIST};
+const initialWatchlist:MarketWatchlist={id:'market-default',name:'My Watchlist',symbols:DEFAULT_WATCHLIST};
 let activeStorageScope='public';
 
 function getScopedStorageKey(name:string){
@@ -69,7 +69,10 @@ export const useMarketWatchlists=create<MarketWatchlistState>()(persist((set,get
     removeItem:name=>localStorage.removeItem(getScopedStorageKey(name)),
   })),
   partialize:state=>({watchlists:state.watchlists,activeWatchlistId:state.activeWatchlistId,selectedSymbol:state.selectedSymbol}),
-  merge:(persistedState,currentState)=>isPersistedWatchlistState(persistedState)?{...currentState,...persistedState}:defaultWatchlistState(currentState),
+  merge:(persistedState,currentState)=>{
+    if(!isPersistedWatchlistState(persistedState))return defaultWatchlistState(currentState);
+    return {...currentState,...persistedState,watchlists:persistedState.watchlists.map(list=>list.id==='market-default'&&list.name==='Mi lista de control'?{...list,name:initialWatchlist.name}:list)};
+  },
   skipHydration:true,
 }));
 

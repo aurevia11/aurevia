@@ -64,7 +64,7 @@ test.describe('public routes and responsive layout',()=>{
 				const response=await page.goto(route);
 				expect(response?.status(),route).toBe(200);
 				await expect(page.locator('h1').first(),route).toBeVisible();
-				if(route==='/markets')await expect(page.getByRole('heading',{name:'Mercados',exact:true})).toBeVisible();
+				if(route==='/markets')await expect(page.getByRole('heading',{name:'Markets',exact:true})).toBeVisible();
 				if(route==='/support')await expect(page.getByRole('heading',{name:'Nova AI',exact:true})).toBeVisible();
 				if(route==='/register'){
 					await expect(page.getByRole('radio',{name:/DEMO ACCOUNT/})).toBeVisible();
@@ -853,7 +853,8 @@ test('DEMO trading supports cash-backed buy and owned-unit sell execution',async
 	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
 	const symbol=fixture('INSTRUMENT_B');
 	await page.goto('/markets');
-	await expect(page.getByRole('heading',{name:'Mercados',exact:true})).toBeVisible();
+	await expect(page.getByRole('heading',{name:'Markets',exact:true})).toBeVisible();
+	await expect(page.getByText(/Proveedor no disponible|Se muestra el último precio recibido|Provider quote timestamp is older than five minutes/i)).toHaveCount(0);
 	const marketPageUrl=page.url();
 	const tradePage=await page.context().newPage();
 	try{

@@ -15,6 +15,13 @@ afterEach(async()=>{
 });
 
 describe('per-account market watchlists',()=>{
+	it('renames the legacy Spanish default watchlist in English',async()=>{
+		vi.stubGlobal('localStorage',storage);
+		localStore.set('aurevia-live-market-watchlists',JSON.stringify({state:{watchlists:[{id:'market-default',name:'Mi lista de control',symbols:['DJI']}],activeWatchlistId:'market-default',selectedSymbol:'DJI'},version:0}));
+		await setMarketWatchlistUserScope(null);
+		expect(useMarketWatchlists.getState().watchlists[0].name).toBe('My Watchlist');
+	});
+
 	it('keeps saved watchlists separate when users share a browser',async()=>{
 		vi.stubGlobal('localStorage',storage);
 		await setMarketWatchlistUserScope('user-a');
@@ -22,7 +29,7 @@ describe('per-account market watchlists',()=>{
 		useMarketWatchlists.getState().addSymbol('AAPL');
 
 		await setMarketWatchlistUserScope('user-b');
-		expect(useMarketWatchlists.getState().watchlists.map(list=>list.name)).toEqual(['Mi lista de control']);
+		expect(useMarketWatchlists.getState().watchlists.map(list=>list.name)).toEqual(['My Watchlist']);
 		expect(useMarketWatchlists.getState().watchlists.flatMap(list=>list.symbols)).not.toContain('AAPL');
 
 		useMarketWatchlists.getState().createWatchlist('User B private list');
