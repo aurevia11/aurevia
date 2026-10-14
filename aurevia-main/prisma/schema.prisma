@@ -195,6 +195,7 @@ model User {
   country String?
   role Role @default(USER)
   accountMode AccountMode @default(DEMO)
+  preferredDisplayCurrency String @default("USD")
   approvedTier Int @default(1)
   status UserStatus @default(ACTIVE)
   twoFactorEnabled Boolean @default(false)
@@ -420,8 +421,20 @@ model LedgerAccount {
   code String @unique
   name String
   currency String @default("USD")
+  startingBalance Decimal @default(0) @db.Decimal(30,10)
   entries LedgerEntry[]
   createdAt DateTime @default(now())
+}
+model ExchangeRate {
+  id String @id @default(cuid())
+  baseCurrency String
+  quoteCurrency String
+  rate Decimal @db.Decimal(30,12)
+  source String
+  observedAt DateTime
+  updatedAt DateTime @updatedAt
+  @@unique([baseCurrency,quoteCurrency])
+  @@index([observedAt])
 }
 model LedgerTransaction {
   id String @id @default(cuid())

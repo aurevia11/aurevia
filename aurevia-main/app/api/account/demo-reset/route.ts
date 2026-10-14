@@ -4,7 +4,7 @@ import {AccountMode,InvestmentStatus,NotificationType,OrderStatus,PositionStatus
 import {z,ZodError} from 'zod';
 import {requireUser} from '@/lib/auth';
 import {db} from '@/lib/db';
-import {balance,DEMO_STARTING_BALANCE,ensureSystemAccount,ensureUserLedger,initializeDemoAccount,postDoubleEntry} from '@/lib/ledger';
+import {balance,ensureSystemAccount,ensureUserLedger,initializeDemoAccount,postDoubleEntry} from '@/lib/ledger';
 import {closeDemoPositionTx} from '@/lib/orders';
 import {createNotification} from '@/lib/notifications';
 import {rateLimit} from '@/lib/rate-limit';
@@ -47,14 +47,14 @@ export async function POST(request:Request){
    for(const position of positions)await closeDemoPositionTx(tx,user.id,position.id);
    const account=await ensureUserLedger(tx,user.id,AccountMode.DEMO,'USD');
    const currentBalance=await balance(tx,account.id);
-   const difference=DEMO_STARTING_BALANCE.minus(currentBalance);
+   const difference=account.startingBalance.minus(currentBalance);
    if(!difference.isZero()){
     const capital=await ensureSystemAccount(tx,'SYSTEM:DEMO:INITIAL_CAPITAL','Demo virtual capital','USD',AccountMode.DEMO);
     await postDoubleEntry(tx,{reference:`DEMO:RESET:${user.id}:${randomUUID()}`,description:'Reset simulated DEMO cash to the original virtual allocation',debitAccountId:difference.gt(0)?capital.id:account.id,creditAccountId:difference.gt(0)?account.id:capital.id,amount:difference.abs()});
    }
    const finalBalance=await balance(tx,account.id);
    await tx.auditLog.create({data:{actorId:user.id,action:'DEMO_ACCOUNT_RESET',entity:'LEDGER_ACCOUNT',entityId:account.id,metadata:{accountMode:AccountMode.DEMO,previousBalance:currentBalance.toString(),finalBalance:finalBalance.toFixed(2),cancelledOrders:cancelledOrders.count,cancelledInvestments:investments.length,closedPositions:positions.length,historyRetained:true}}});
-   await createNotification(tx,{userId:user.id,type:NotificationType.ACCOUNT,title:'DEMO portfolio reset',message:'Simulated cash was reset to $5,000.00. Open orders and positions were closed and unsettled DEMO investments cancelled. Historical ledger and audit records remain available.',dedupeKey:`demo-reset:${user.id}:${randomUUID()}`,actionUrl:'/portfolio'});
+   await createNotification(tx,{userId:user.id,type:NotificationType.ACCOUNT,title:'DEMO portfolio reset',message:`Simulated cash was reset to ${finalBalance.toFixed(2)} USD. Open orders and positions were closed and unsettled DEMO investments cancelled. Historical ledger and audit records remain available.`,dedupeKey:`demo-reset:${user.id}:${randomUUID()}`,actionUrl:'/portfolio'});
    return {balance:finalBalance,cancelledOrders:cancelledOrders.count,cancelledInvestments:investments.length,closedPositions:positions.length};
   },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
   return NextResponse.json({ok:true,...result},{headers:{'Cache-Control':'private, no-store'}});

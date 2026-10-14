@@ -33,7 +33,7 @@ function formatNumber(value:Prisma.Decimal|number|string){return decimal(value).
 
 export async function getUserActivity(userId:string,accountMode:AccountMode,category:ActivityCategory,limit=20,cursor?:string):Promise<ActivityPage>{
   const [ledgerEntries,orders,positions,investments,fundingRequests,auditLogs]=await Promise.all([
-    db.ledgerEntry.findMany({where:{account:{userId,accountMode}},include:{transaction:{select:{reference:true,description:true,createdAt:true}}},orderBy:{createdAt:'desc'},take:limit*3}),
+    db.ledgerEntry.findMany({where:{account:{userId,accountMode}},include:{account:{select:{userId:true,currency:true,accountMode:true}},transaction:{select:{reference:true,description:true,createdAt:true}}},orderBy:{createdAt:'desc'},take:limit*3}),
     db.order.findMany({where:{userId,accountMode},include:{instrument:{select:{symbol:true}},executions:{select:{quantity:true,price:true,fee:true,createdAt:true}}},orderBy:{createdAt:'desc'},take:limit*3}),
     db.position.findMany({where:{userId,accountMode},include:{instrument:{select:{symbol:true}}},orderBy:{openedAt:'desc'},take:limit*3}),
     db.investmentRequest.findMany({where:{userId,accountMode},include:{opportunity:{select:{title:true,assetSymbol:true,category:true,targetReturnPercent:true,durationDays:true}}},orderBy:{requestedAt:'desc'},take:limit*3}),
@@ -41,9 +41,18 @@ export async function getUserActivity(userId:string,accountMode:AccountMode,cate
     db.auditLog.findMany({where:{actorId:userId,entity:{in:['ORDER','POSITION','INVESTMENT']}},select:{id:true,actorId:true,action:true,entity:true,entityId:true,metadata:true,createdAt:true},orderBy:{createdAt:'desc'},take:limit*3}),
   ]);
   const records:ActivityRecord[] = [
-    ...ledgerEntries.map(entry=>({
-      id:entry.id,category:'account' as const,action:entry.type==='CREDIT'?'Cash credited':'Cash debited',timestamp:entry.createdAt.toISOString(),asset:'USD',quantity:formatNumber(entry.amount),price:null,amount:formatAmount(entry.amount),status:'POSTED',source:'ledger' as const,sourceLabel:entry.transaction.reference,adminInitiated:false,pnl:null,link:'/wallet/transactions',details:{reference:entry.transaction.reference,description:entry.transaction.description},
-    })),
+    ...[...ledgerEntries.reduce((groups,entry)=>groups.set(entry.transactionId,[...(groups.get(entry.transactionId)||[]),entry]),new Map<string,typeof ledgerEntries>()).values()].map(entries=>{
+      const entry=entries[0];
+      if(!entry)throw new Error('LEDGER_TRANSACTION_EMPTY');
+      const userEntries=entries.filter(item=>item.account.userId===userId);
+      const conversion=entry.transaction.reference.startsWith('DEMO:BTC:CONVERSION:');
+      const btcEntry=userEntries.find(item=>item.account.currency==='BTC');
+      const usdEntry=userEntries.find(item=>item.account.currency==='USD');
+      const mainEntry=conversion?(btcEntry||usdEntry||entry):usdEntry||userEntries[0]||entry;
+      return {
+        id:entry.transactionId,category:'account' as const,action:conversion?'SIMULATED BTC conversion':userEntries.some(item=>item.type==='CREDIT')?'Account ledger credit':'Account ledger debit',timestamp:entry.transaction.createdAt.toISOString(),asset:conversion?'BTC/USD':mainEntry.account.currency,quantity:formatNumber(mainEntry.amount),price:null,amount:formatAmount(mainEntry.amount),status:'POSTED',source:'ledger' as const,sourceLabel:entry.transaction.reference,adminInitiated:entry.transaction.reference.startsWith('ADMIN:'),pnl:null,link:'/activity',details:{reference:entry.transaction.reference,description:entry.transaction.description,accountMode:mainEntry.account.accountMode,currencies:[...new Set(userEntries.map(item=>item.account.currency))].join(', ')},
+      };
+    }),
     ...orders.map(order=>({
       id:order.id,category:(order.side==='BUY'?'trade':'personal-trade') as ActivityRecord['category'],action:`${order.side} ${order.type.toLowerCase()} order`,timestamp:order.createdAt.toISOString(),asset:order.instrument.symbol,side:order.side,quantity:formatNumber(order.quantity),price:order.averageFillPrice?formatAmount(order.averageFillPrice):order.price?formatAmount(order.price):null,amount:order.averageFillPrice?formatAmount(order.averageFillPrice!.mul(order.filledQuantity)):formatAmount(order.quantity),status:order.status.replaceAll('_',' '),source:'order' as const,sourceLabel:order.type,adminInitiated:false,pnl:null,link:`/orders`,details:{type:order.type,filledQuantity:formatNumber(order.filledQuantity),fee:formatAmount(order.fee)},
     })),

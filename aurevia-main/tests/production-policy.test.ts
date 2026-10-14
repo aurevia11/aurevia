@@ -5,7 +5,7 @@ import {getAccountTier,validateDepositApproval,validateTierThreeApproval,validat
 
 describe('production account policy',()=>{
   it('starts every demo account with exactly 5,000 simulated USD',()=>{
-    expect(DEMO_STARTING_BALANCE.toFixed(2)).toBe('5000.00');
+    expect(DEMO_STARTING_BALANCE.toFixed(2)).toBe('10000.00');
   });
 
   it('keeps demo and real account states isolated',()=>{

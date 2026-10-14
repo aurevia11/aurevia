@@ -13,6 +13,7 @@ import QRCode from 'qrcode';
 type PaymentMethod={id:string;name:string;currencies:string[];destination:string|null;instructions:string|null;minimumAmount:string|number;maximumAmount:string|number|null;depositEnabled:boolean;withdrawalEnabled:boolean;requiresNetwork:boolean;demoOnly:boolean};
 type FundingRecord={id:string;type:'DEPOSIT'|'WITHDRAWAL';method:string;amount:number|string;creditedAmount?:number|string|null;currency:string;status:string;accountMode:'DEMO'|'REAL';createdAt:string;reviewedAt?:string|null;reviewedBy?:{name:string|null;email:string}|null;transactionReference?:string|null;adminNote?:string|null;hasReceipt?:boolean;user?:{name:string|null;email:string}};
 type WalletData={accountMode:'DEMO'|'REAL';balance:number|string|null;balances:Array<{currency:string;balance:number|string}>;transactions:FundingRecord[]};
+type CurrencyRate={rate:number|string|null;source:string|null;observedAt:string|null;status:'CURRENT'|'STALE'|'UNAVAILABLE'};
 type PaymentMethodsResponse={methods:PaymentMethod[];fundingStatus:'DEMO'|'AVAILABLE'|'MANUAL_REVIEW'|'NOT_CONFIGURED'|'DISABLED'|'ERROR';realFundingAvailable:boolean;realWithdrawalAvailable:boolean;manualDepositReviewAvailable:boolean};
 type KycData={kycStatus:string;documents:number;verificationProfileSubmitted:boolean;depositEnabled:boolean;withdrawalEnabled:boolean;accountRestricted:boolean;restrictionReason:string|null;canWithdraw?:boolean};
 
@@ -90,6 +91,9 @@ export default function WalletExperience(){
 	const [proofFile,setProofFile]=useState<File|null>(null);
 	const [bitcoinQr,setBitcoinQr]=useState('');
 	const [bitcoinQrError,setBitcoinQrError]=useState('');
+	const [displayCurrency,setDisplayCurrency]=useState('USD');
+	const [currencyRate,setCurrencyRate]=useState<CurrencyRate|null>(null);
+	const [currencyError,setCurrencyError]=useState('');
 
 	const availableMethods=useMemo(()=>methods.filter(method=>type==='DEPOSIT'?method.depositEnabled:method.withdrawalEnabled&&(data.accountMode==='DEMO'||realWithdrawalAvailable)),[methods,type,data.accountMode,realWithdrawalAvailable]);
 	const selectedMethod=availableMethods.find(method=>method.id===methodId);
@@ -110,8 +114,9 @@ export default function WalletExperience(){
 			fetch('/api/wallet',{cache:'no-store'}).then(async response=>({response,result:await response.json()})),
 			fetch('/api/payment-methods',{cache:'no-store'}).then(async response=>({response,result:await response.json()})),
 			fetch('/api/profile',{cache:'no-store'}).then(async response=>({response,result:await response.json()})),
+			fetch('/api/currency-preference',{cache:'no-store'}).then(async response=>({response,result:await response.json()})),
 		]);
-		const [walletRequest,methodsRequest,profileRequest]=requests;
+		const [walletRequest,methodsRequest,profileRequest,currencyPreferenceRequest]=requests;
 		if(walletRequest.status==='fulfilled'&&walletRequest.value.response.ok&&isWalletData(walletRequest.value.result)){
 			setData(walletRequest.value.result);setHasWalletData(true);
 		}else{
@@ -137,8 +142,29 @@ export default function WalletExperience(){
 		}else{
 			setProfile(null);setProfileLoadError('Account verification status is temporarily unavailable.');
 		}
+		if(currencyPreferenceRequest.status==='fulfilled'&&currencyPreferenceRequest.value.response.ok&&typeof currencyPreferenceRequest.value.result.currency==='string')setDisplayCurrency(currencyPreferenceRequest.value.result.currency);
 		if(showLoading)setLoading(false);
 	},[]);
+
+	useEffect(()=>{
+		if(displayCurrency==='USD'){setCurrencyRate(null);setCurrencyError('');return}
+		let current=true;
+		void fetch(`/api/currency-rates?to=${encodeURIComponent(displayCurrency)}`,{cache:'no-store'}).then(async response=>{
+			const result=await response.json();
+			if(!response.ok)throw new Error(result.error||'Exchange rate unavailable.');
+			if(current){setCurrencyRate(result);setCurrencyError('')}
+		}).catch(exception=>{if(current){setCurrencyRate(null);setCurrencyError(exception instanceof Error?exception.message:'Exchange rate unavailable.')}})
+		return()=>{current=false};
+	},[displayCurrency]);
+	async function updateDisplayCurrency(value:string){
+		setCurrencyError('');
+		try{
+			const response=await fetch('/api/currency-preference',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({currency:value})});
+			const result=await response.json();
+			if(!response.ok)throw new Error(result.error||'Unable to save display currency.');
+			setDisplayCurrency(result.currency);
+		}catch(exception){setCurrencyError(exception instanceof Error?exception.message:'Unable to save display currency.')}
+	}
 
 	useEffect(()=>{
 		if(sessionStatus!=='authenticated')return;
@@ -262,7 +288,15 @@ export default function WalletExperience(){
 			</div>
 			<p className="wallet-demo-note">{hasWalletData?translate('walletDemoNote'):'Balance could not be retrieved. No balance is assumed.'}</p>
 			<div className="wallet-currency-list">{data.balances.map(item=><span key={item.currency}>{balanceVisible?money(Number(item.balance),item.currency):`${item.currency} ••••••`}</span>)}</div>
+			<div className="mt-4 grid gap-2 border-t border-white/10 pt-4 sm:grid-cols-[minmax(170px,220px)_1fr] sm:items-end">
+				<label className="block text-xs muted">Preferred display currency<select className="input mt-1 min-h-11" value={displayCurrency} onChange={event=>void updateDisplayCurrency(event.target.value)}>{['USD','EUR','GBP','NGN','CAD','AUD','CHF','JPY'].map(code=><option key={code}>{code}</option>)}</select></label>
+				<div className="text-sm" aria-live="polite">
+					{displayCurrency==='USD'?<p>Original ledger amounts shown in their account currencies. Changing this preference never exchanges funds.</p>:currencyRate?.status==='CURRENT'&&currencyRate.rate&&data.balance!==null?<><p>Approximate display: {balanceVisible?new Intl.NumberFormat(undefined,{style:'currency',currency:displayCurrency}).format(Number(data.balance)*Number(currencyRate.rate)):`•••••• ${displayCurrency}`} · Original ledger balance: {balanceVisible?money(Number(data.balance),'USD'):'•••••• USD'}</p><p className="mt-1 text-xs muted">Rate source: {currencyRate.source} · Updated {currencyRate.observedAt?new Date(currencyRate.observedAt).toLocaleString():'unknown'}. Display only; no ledger conversion.</p></>:<p className="text-xs text-amber-200">{currencyRate?.status==='STALE'?'The available exchange rate is stale; no converted amount is shown.':currencyError||'A current configured exchange rate is unavailable; no converted amount is shown.'}</p>}
+					{currencyError&&displayCurrency!=='USD'&&currencyRate?.status!=='STALE'&&<p className="mt-1 text-xs text-loss" role="alert">{currencyError}</p>}
+				</div>
+			</div>
 		</section>
+		{data.accountMode==='DEMO'&&<Link className="btn mt-4 min-h-11 bg-white/5" href="/wallet/convert"><QrCode size={15}/>Convert DEMO USD to virtual BTC</Link>}
 		{error&&<p className="mt-3 text-sm text-loss" role="alert">{error}</p>}
 		{message&&<p className="mt-3 text-sm text-profit" role="status">{message}</p>}
 		<div className="account-metrics mt-3"><div className="account-metric"><span>{translate('pendingReview')}</span><b>{hasWalletData?data.transactions.filter(item=>reserves.includes(item.status)).length:'—'}</b><small>{translate('noLedgerPosting')}</small></div><div className="account-metric"><span>{translate('withdrawalReservations')}</span><b>{hasWalletData?availableBalance===null?'Unavailable':money(pendingWithdrawal,currency):'—'}</b><small>{translate('requestsAwaitingReview',{currency})}</small></div><div className="account-metric"><span>{translate('enabledPaymentMethods')}</span><b>{methodLoadError?'—':methods.length}</b><small>{translate('configuredByAdministrator')}</small></div><div className="account-metric"><span>{translate('recentRequests')}</span><b>{hasWalletData?data.transactions.length:'—'}</b><small>{translate('latest100')}</small></div></div>

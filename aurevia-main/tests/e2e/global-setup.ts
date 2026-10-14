@@ -75,6 +75,8 @@ export default async function globalSetup(){
 				await db.user.create({data:{id:investorId,email:investorEmail,name:'Investment E2E User',country:'Test',passwordHash:await bcrypt.hash(investorPassword,10),accountMode:AccountMode.DEMO,status:UserStatus.ACTIVE,kycStatus:KycStatus.APPROVED,verifiedAt:new Date()}});
 		const instruments=await Promise.all([...symbols,cryptoSymbol].map((symbol,index)=>db.instrument.create({data:{symbol,name:index===2?'E2E simulated Bitcoin':`E2E simulated instrument ${index+1}`,baseAsset:index===2?'BTC':`E2E${index+1}`,quoteAsset:'USD',price:index===0?10:index===1?20:65000,enabled:true}})));
 		instrumentIds.push(...instruments.map(instrument=>instrument.id));
+		const btcUsd=await db.instrument.upsert({where:{symbol:'BTC/USD'},update:{},create:{symbol:'BTC/USD',name:'E2E simulated BTC/USD',baseAsset:'BTC',quoteAsset:'USD',price:92500,enabled:true}});
+		instrumentIds.push(btcUsd.id);
 		await db.$transaction(async tx=>{
 			await initializeDemoAccount(tx,userId);
 			await initializeDemoAccount(tx,legacyUserId);

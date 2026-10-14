@@ -15,7 +15,7 @@ export async function GET(){
   const user=await requireUser();
   const mode=user.accountMode;
   const [account,positions,realizedAggregate,investments,settledInvestments,depositAggregate,withdrawalAggregate]=await Promise.all([
-   db.ledgerAccount.findUnique({where:{code:`USER:${user.id}:${mode}:USD`},select:{id:true}}),
+   db.ledgerAccount.findUnique({where:{code:`USER:${user.id}:${mode}:USD`},select:{id:true,startingBalance:true}}),
    db.position.findMany({where:{userId:user.id,accountMode:mode,status:'OPEN'},include:{instrument:true},orderBy:{openedAt:'asc'}}),
    db.position.aggregate({where:{userId:user.id,accountMode:mode},_sum:{realizedPnl:true}}),
    db.investmentRequest.findMany({where:{userId:user.id,accountMode:mode},include:{opportunity:{select:{title:true,category:true,riskLevel:true}}},orderBy:{requestedAt:'desc'}}),
@@ -44,7 +44,8 @@ export async function GET(){
   const totalPnl=isDemo?realizedPnl!.plus(unrealizedPnl):null;
   const totalValue=cashBalance.plus(positionValue).plus(investmentValue);
   const netExternalDemoFunding=isDemo?new Prisma.Decimal(depositAggregate._sum.amount??0).minus(withdrawalAggregate._sum.amount??0):zero();
-  const returnBasis=new Prisma.Decimal('5000.00').plus(netExternalDemoFunding);
+  const startingBalance=account?.startingBalance??zero();
+  const returnBasis=startingBalance.plus(netExternalDemoFunding);
   const returnPercent=isDemo&&returnBasis.gt(0)?totalPnl!.div(returnBasis).mul(100):null;
 
   let dailyPnl:Prisma.Decimal|null=null;

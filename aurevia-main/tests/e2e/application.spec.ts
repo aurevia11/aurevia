@@ -1,5 +1,5 @@
 import {randomUUID} from 'node:crypto';
-import {PrismaClient} from '@prisma/client';
+import {Prisma,PrismaClient} from '@prisma/client';
 import {PNG} from 'pngjs';
 import {test,expect,loginAs,logout,waitForStartup,expectNoHorizontalOverflow} from './fixtures';
 import {db} from '../../lib/db';
@@ -559,7 +559,7 @@ test('registration skips contact verification and platform health remains availa
 	const kycResponse=await page.request.get('/api/kyc');
 	expect((await kycResponse.json()).dob).toBe('2000-02-29T00:00:00.000Z');
 	const demoWallet=await page.request.get('/api/wallet');
-	expect(Number((await demoWallet.json()).balance)).toBe(5000);
+	expect(Number((await demoWallet.json()).balance)).toBe(10000);
 	await selectAccountMode(page,'REAL');
 	await page.goto('/dashboard');
 	await expect(page.getByRole('heading',{name:'Hello, Edited'})).toBeVisible();
@@ -569,7 +569,7 @@ test('registration skips contact verification and platform health remains availa
 	await page.goto('/dashboard');
 	await expect(page.getByRole('heading',{name:'Hello, Edited'})).toBeVisible();
 	await expect(page.locator('.dashboard-real-state')).toHaveCount(0);
-	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5000);
+	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(10000);
 	await logout(page);
 	const healthAfterLogout=await page.request.get('/api/health');
 	expect(healthAfterLogout.ok()).toBeTruthy();
@@ -757,7 +757,7 @@ test('REAL provider status is admin-only, configured deposit credits work, and w
 
 	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(125);
 	await selectAccountMode(page,'DEMO');
-	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5000);
+	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(10000);
 });
 
 test('Account Funding loads its wallet independently and clearly blocks unconfigured REAL funding',async({page})=>{
@@ -766,7 +766,7 @@ test('Account Funding loads its wallet independently and clearly blocks unconfig
 	await selectAccountMode(page,'DEMO');
 	await page.goto('/wallet');
 	await expect(page.getByRole('heading',{name:/wallet|funding/i}).first()).toBeVisible();
-	await expect(page.locator('.wallet-balance-value')).toHaveText('5,000.00 USD');
+	await expect(page.locator('.wallet-balance-value')).toHaveText('10,000.00 USD');
 	await expect(page.getByLabel('Payment method')).toBeEnabled();
 	const fundingTypeButtons=page.locator('.wallet-type-switch button');
 	await fundingTypeButtons.nth(1).click();
@@ -778,7 +778,7 @@ test('Account Funding loads its wallet independently and clearly blocks unconfig
 	await page.route('**/api/payment-methods',route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Payment methods are temporarily unavailable.'})}));
 	await page.getByRole('button',{name:'Refresh wallet history'}).click();
 	await expect(page.getByText('Loading wallet data…')).toHaveCount(0);
-	await expect(page.locator('.wallet-balance-value')).toHaveText('5,000.00 USD');
+	await expect(page.locator('.wallet-balance-value')).toHaveText('10,000.00 USD');
 	await expect(page.getByRole('status').filter({hasText:'Payment methods are temporarily unavailable.'})).toBeVisible();
 	await page.unroute('**/api/payment-methods');
 	await page.route('**/api/wallet',route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Wallet data is temporarily unavailable.'})}));
@@ -789,7 +789,7 @@ test('Account Funding loads its wallet independently and clearly blocks unconfig
 	await expect(page.getByRole('button',{name:/Review deposit request/i})).toBeDisabled();
 	await page.unroute('**/api/wallet');
 	await page.getByRole('button',{name:'Refresh wallet history'}).click();
-	await expect(page.locator('.wallet-balance-value')).toHaveText('5,000.00 USD');
+	await expect(page.locator('.wallet-balance-value')).toHaveText('10,000.00 USD');
 	await selectAccountMode(page,'REAL');
 	await page.goto('/wallet');
 	const methods=await page.request.get('/api/payment-methods').then(response=>response.json());
@@ -902,7 +902,7 @@ test('closing a DEMO position records a sell execution, reconciles portfolio, an
 	expect(buy.ok()).toBeTruthy();
 	expect((await buy.json()).status).toBe('FILLED');
 	const afterBuyWallet=await page.request.get('/api/wallet').then(response=>response.json());
-	expect(Number(afterBuyWallet.balance)).toBeLessThan(5000);
+	expect(Number(afterBuyWallet.balance)).toBeLessThan(10000);
 	const positions=await page.request.get('/api/positions').then(response=>response.json());
 	expect(positions).toHaveLength(1);
 	const openPortfolio=await page.request.get('/api/portfolio').then(response=>response.json());
@@ -922,6 +922,94 @@ test('closing a DEMO position records a sell execution, reconciles portfolio, an
 	expect(notificationResponse.notifications.some((item:{title:string;relatedId:string|null})=>item.relatedId===closeOrder.id&&item.title==='Demo position closed')).toBe(true);
 });
 
+test('simulated BTC conversion is ledger-backed, idempotent, and isolated from REAL cash',async({page})=>{
+	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
+	await selectAccountMode(page,'DEMO');
+	const initial=await page.request.get('/api/wallet').then(response=>response.json());
+	const userId=await page.request.get('/api/profile').then(response=>response.json().then(profile=>profile.id));
+	const cashBefore=Number(initial.balance);
+	const btcBefore=Number(initial.balances.find((item:{currency:string})=>item.currency==='BTC')?.balance||0);
+	const btcInstrument=(await page.request.get('/api/market').then(response=>response.json())).find((item:{symbol:string})=>item.symbol==='BTC/USD');
+	expect(btcInstrument).toMatchObject({dataMode:'SIMULATED'});
+	const key=randomUUID();
+	const payload={direction:'BUY',amount:'100.00'};
+	const first=await page.request.post('/api/wallet/convert-bitcoin',{headers:{'Idempotency-Key':key},data:payload});
+	expect(first.status()).toBe(201);
+	const purchase=await first.json();
+	expect(purchase.reference).toContain('DEMO:BTC:CONVERSION:');
+	expect(Number(purchase.bitcoinAmount)).toBeGreaterThan(0);
+	const replay=await page.request.post('/api/wallet/convert-bitcoin',{headers:{'Idempotency-Key':key},data:payload});
+	expect(replay.status()).toBe(200);
+	expect((await replay.json()).replayed).toBe(true);
+	const afterBuy=await page.request.get('/api/wallet').then(response=>response.json());
+	expect(Number(afterBuy.balance)).toBeCloseTo(cashBefore-100,8);
+	expect(Number(afterBuy.balances.find((item:{currency:string})=>item.currency==='BTC').balance)).toBeCloseTo(btcBefore+Number(purchase.bitcoinAmount),10);
+	const attemptedOverspend=await page.request.post('/api/wallet/convert-bitcoin',{headers:{'Idempotency-Key':randomUUID()},data:{direction:'BUY',amount:'99999999'}});
+	expect(attemptedOverspend.status()).toBe(409);
+	const sellKey=randomUUID();
+	const sellAmount=(Number(purchase.bitcoinAmount)/2).toFixed(10);
+	const sale=await page.request.post('/api/wallet/convert-bitcoin',{headers:{'Idempotency-Key':sellKey},data:{direction:'SELL',amount:sellAmount}});
+	expect(sale.status()).toBe(201);
+	const afterSale=await page.request.get('/api/wallet').then(response=>response.json());
+	expect(Number(afterSale.balances.find((item:{currency:string})=>item.currency==='BTC').balance)).toBeCloseTo(Number(purchase.bitcoinAmount)-Number(sellAmount),10);
+	const conversions=await db.ledgerTransaction.findMany({where:{reference:{startsWith:`DEMO:BTC:CONVERSION:${userId}:`}},include:{entries:{include:{account:true}}}});
+	expect(conversions).toHaveLength(2);
+	for(const conversion of conversions){
+		for(const currency of ['USD','BTC']){
+			const currencyEntries=conversion.entries.filter(entry=>entry.account.currency===currency);
+			const debits=currencyEntries.filter(entry=>entry.type==='DEBIT').reduce((sum,entry)=>sum.plus(entry.amount),new Prisma.Decimal(0));
+			const credits=currencyEntries.filter(entry=>entry.type==='CREDIT').reduce((sum,entry)=>sum.plus(entry.amount),new Prisma.Decimal(0));
+			expect(debits.eq(credits)).toBe(true);
+		}
+	}
+	await selectAccountMode(page,'REAL');
+	expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(0);
+	await selectAccountMode(page,'DEMO');
+	expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(Number(afterSale.balance));
+	const notifications=await page.request.get('/api/notifications?limit=100').then(response=>response.json());
+	expect(notifications.notifications.some((item:{message:string})=>item.message.includes(purchase.reference)&&item.message.includes('SIMULATED'))).toBe(true);
+});
+
+test('administrative balance adjustments require authorization and confirmation data, and are idempotent',async({browser,page})=>{
+	await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
+	await selectAccountMode(page,'DEMO');
+	const userId=await page.request.get('/api/profile').then(response=>response.json().then(profile=>profile.id));
+	const initialDemo=await page.request.get('/api/wallet').then(response=>response.json());
+	const beforeDemo=Number(initialDemo.balance);
+	const unauthorized=await page.request.post('/api/admin/balances',{data:{userId,accountMode:'DEMO',currency:'USD',amount:'25.00',direction:'CREDIT',category:'ADMIN_ALLOCATION',reason:'Approved training allocation',idempotencyKey:randomUUID()}});
+	expect(unauthorized.status()).toBe(403);
+	const adminContext=await browser.newContext();
+	try{
+		const adminPage=await adminContext.newPage();
+		await loginAs(adminPage,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
+		const search=await adminPage.request.get(`/api/admin/users?search=${encodeURIComponent(fixture('INVESTOR_EMAIL'))}`);
+		expect(search.ok()).toBeTruthy();
+		expect((await search.json()).some((user:{id:string})=>user.id===userId)).toBe(true);
+		const key=randomUUID();
+		const payload={userId,accountMode:'DEMO',currency:'USD',amount:'25.00',direction:'CREDIT',category:'ADMIN_ALLOCATION',reason:'Approved training allocation',idempotencyKey:key};
+		const credited=await adminPage.request.post('/api/admin/balances',{data:payload});
+		expect(credited.status()).toBe(201);
+		const first=await credited.json();
+		expect(first).toMatchObject({replayed:false,previousBalance:String(beforeDemo),newBalance:String(beforeDemo+25)});
+		const replay=await adminPage.request.post('/api/admin/balances',{data:payload});
+		expect(replay.status()).toBe(200);
+		expect((await replay.json()).reference).toBe(first.reference);
+		const reused=await adminPage.request.post('/api/admin/balances',{data:{...payload,amount:'26.00'}});
+		expect(reused.status()).toBe(409);
+		const debit=await adminPage.request.post('/api/admin/balances',{data:{...payload,idempotencyKey:randomUUID(),direction:'DEBIT',category:'CORRECTION',amount:'5.00',reason:'Correct duplicate training allocation'}});
+		expect(debit.status()).toBe(201);
+		const debitResult=await debit.json();
+		const insufficient=await adminPage.request.post('/api/admin/balances',{data:{...payload,idempotencyKey:randomUUID(),direction:'DEBIT',amount:'99999999.00',reason:'Rejected excessive debit'}});
+		expect(insufficient.status()).toBe(409);
+		const audit=await db.auditLog.findMany({where:{entity:'LEDGER_TRANSACTION',entityId:{in:[first.transactionId,debitResult.transactionId]}}});
+		expect(audit).toHaveLength(2);
+		const notifications=await page.request.get('/api/notifications?limit=100').then(response=>response.json());
+		expect(notifications.notifications.some((item:{message:string})=>item.message.includes(first.reference)&&item.message.includes('25.00 USD'))).toBe(true);
+		await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(beforeDemo+20);
+	}
+	finally{await adminContext.close();}
+});
+
 test('investment requests remain mode-isolated through admin review without fake REAL settlement',async({browser,page})=>{
 	const adminContext=await browser.newContext();
 	const adminPage=await adminContext.newPage();
@@ -934,7 +1022,8 @@ test('investment requests remain mode-isolated through admin review without fake
 		await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
 		await selectAccountMode(page,'DEMO');
 		const initialDemoWallet=await page.request.get('/api/wallet').then(response=>response.json());
-		expect(Number(initialDemoWallet.balance)).toBe(5000);
+		const initialDemoBalance=Number(initialDemoWallet.balance);
+		expect(initialDemoBalance).toBeGreaterThanOrEqual(10000);
 		await page.goto('/investments');
 		await expect(page.getByRole('heading',{name:'Available opportunities'})).toBeVisible();
 		await page.getByLabel('Amount (USD)').fill('1000');
@@ -943,7 +1032,7 @@ test('investment requests remain mode-isolated through admin review without fake
 		let userInvestments=await page.request.get('/api/investments').then(response=>response.json());
 		const demoRequest=userInvestments.requests.find((item:{opportunityId:string;accountMode:string})=>item.opportunityId===opportunity.id&&item.accountMode==='DEMO');
 		expect(demoRequest.status).toBe('PENDING_APPROVAL');
-		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(4000);
+		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(initialDemoBalance-1000);
 
 		const unrelatedContext=await browser.newContext();
 		try{
@@ -963,11 +1052,11 @@ test('investment requests remain mode-isolated through admin review without fake
 		await review(demoRequest.id,'approve');
 		await review(demoRequest.id,'activate');
 		await review(demoRequest.id,'complete');
-		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(4000);
+		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(initialDemoBalance-1000);
 		await review(demoRequest.id,'settle',{simulatedPayout:1100});
 		userInvestments=await page.request.get('/api/investments').then(response=>response.json());
 		expect(userInvestments.requests.find((item:{id:string})=>item.id===demoRequest.id).status).toBe('SETTLED');
-		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5100);
+		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(initialDemoBalance+100);
 
 		await selectAccountMode(page,'REAL');
 		const initialRealBalance=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
@@ -1006,17 +1095,17 @@ test('investment requests remain mode-isolated through admin review without fake
 		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(initialRealBalance);
 
 		await selectAccountMode(page,'DEMO');
-			await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5100);
+			await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(initialDemoBalance+100);
 			await logout(page);
 		await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
 		const persistedDemoWallet=await page.request.get('/api/wallet').then(response=>response.json());
-		expect(Number(persistedDemoWallet.balance)).toBe(5100);
+		expect(Number(persistedDemoWallet.balance)).toBe(initialDemoBalance+100);
 		await page.goto('/portfolio');
 		await page.getByRole('button',{name:'Reset DEMO'}).click();
 		await page.getByLabel('Type RESET DEMO ACCOUNT to confirm').fill('RESET DEMO ACCOUNT');
 		await page.getByRole('button',{name:'Confirm DEMO reset'}).click();
-		await expect(page.getByRole('status')).toContainText('DEMO portfolio reset to $5,000.00');
-		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5000);
+		await expect(page.getByRole('status')).toContainText('DEMO portfolio reset to $10,000.00');
+		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(10000);
 		await selectAccountMode(page,'REAL');
 			await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(initialRealBalance);
 		await expectNoHorizontalOverflow(page);
@@ -1144,7 +1233,7 @@ test('administrator email sign-in persists through refresh and logout removes ad
 	await expect(page).toHaveURL(/\/login/);
 });
 
-test('admin funding updates separate DEMO and simulated/configured REAL balances',async({page})=>{
+test('admin ledger adjustments update isolated DEMO and REAL accounts with audit and idempotency',async({page})=>{
 	await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
 	await selectAccountMode(page,'DEMO');
 	const userId=await page.request.get('/api/auth/session').then(async response=>(await response.json()).user.id as string);
@@ -1154,36 +1243,34 @@ test('admin funding updates separate DEMO and simulated/configured REAL balances
 	await selectAccountMode(page,'DEMO');
 	await logout(page);
 	await loginAs(page,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
-	const credited=await page.request.patch('/api/admin/users',{data:{userId,manualBalance:{accountMode:'DEMO',currency:'USD',amount:25.5,type:'CREDIT'}}});
-	expect(credited.status()).toBe(200);
 	const creditKey=randomUUID();
-	const realCredit=await page.request.patch('/api/admin/users',{data:{userId,manualBalance:{accountMode:'REAL',currency:'USD',amount:25.5,type:'CREDIT',idempotencyKey:creditKey}}});
-	expect(realCredit.status()).toBe(200);
-	const duplicateRealCredit=await page.request.patch('/api/admin/users',{data:{userId,manualBalance:{accountMode:'REAL',currency:'USD',amount:25.5,type:'CREDIT',idempotencyKey:creditKey}}});
-	expect(duplicateRealCredit.status()).toBe(200);
+	const demoCredit=await page.request.post('/api/admin/balances',{data:{userId,accountMode:'DEMO',currency:'USD',amount:'25.50',direction:'CREDIT',category:'ADMIN_ALLOCATION',reason:'Approved simulated training allocation',idempotencyKey:creditKey}});
+	expect(demoCredit.status()).toBe(201);
+	expect((await demoCredit.json()).newBalance).toBe(String(before+25.5));
+	const duplicateDemoCredit=await page.request.post('/api/admin/balances',{data:{userId,accountMode:'DEMO',currency:'USD',amount:'25.50',direction:'CREDIT',category:'ADMIN_ALLOCATION',reason:'Approved simulated training allocation',idempotencyKey:creditKey}});
+	expect(duplicateDemoCredit.status()).toBe(200);
+	const realKey=randomUUID();
+	const realCredit=await page.request.post('/api/admin/balances',{data:{userId,accountMode:'REAL',currency:'USD',amount:'25.50',direction:'CREDIT',category:'ADMIN_ALLOCATION',reason:'Administrator-recorded allocation pending external settlement',idempotencyKey:realKey}});
+	expect(realCredit.status()).toBe(201);
 	await page.goto('/admin');
-	const manualFunding=page.locator('section.card').filter({has:page.getByRole('heading',{name:'Manual account funding'})}).first();
+	const manualFunding=page.locator('section.card').filter({has:page.getByRole('heading',{name:'Administrative account adjustment'})}).first();
+	await manualFunding.getByPlaceholder('Search name, email, or ID').fill(fixture('INVESTOR_EMAIL'));
 	await expect(manualFunding.locator('select').nth(0).locator(`option[value="${userId}"]`)).toHaveCount(1);
 	await manualFunding.locator('select').nth(0).selectOption(userId);
 	await manualFunding.locator('select').nth(1).selectOption('REAL');
 	await manualFunding.locator('input[type="number"]').fill('2500.00');
-	await manualFunding.getByRole('button',{name:'Approve and credit simulated REAL deposit $2,500.00'}).click();
-	await expect(page.getByRole('status').filter({hasText:'Simulated/configured REAL deposit of 2,500.00 USD credited'})).toBeVisible();
+	await manualFunding.locator('input[required]').fill('Approved administrator-recorded allocation pending settlement');
+	await manualFunding.getByRole('button',{name:'Review adjustment'}).click();
+	await manualFunding.getByRole('button',{name:'Confirm adjustment'}).click();
+	await expect(page.getByRole('status')).toContainText('Recorded credit of 2,500.00 USD in REAL');
 	await logout(page);
 	await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
 	await selectAccountMode(page,'REAL');
 	const realWallet=await page.request.get('/api/wallet').then(response=>response.json());
 	const realBalance=Number(realWallet.balance);
 	expect(realBalance).toBeCloseTo(beforeRealBalance+2525.5,2);
-	const configuredDeposits=realWallet.transactions.filter((item:{method:string})=>item.method==='Admin configured simulated REAL deposit');
-	expect(configuredDeposits).toHaveLength(2);
-	expect(configuredDeposits.every((item:{type:string;status:string;accountMode:string;currency:string})=>item.type==='DEPOSIT'&&item.status==='APPROVED'&&item.accountMode==='REAL'&&item.currency==='USD')).toBe(true);
-	expect(configuredDeposits.map((item:{creditedAmount:string})=>Number(item.creditedAmount)).sort((left:number,right:number)=>left-right)).toEqual([25.5,2500]);
-	await page.goto('/wallet');
-	const configuredReceipt=page.locator('details').filter({hasText:'Real Account deposit · 2,500.00 USD · Approved'}).first();
-	await expect(configuredReceipt).toBeVisible();
-	await configuredReceipt.locator('summary').click();
-	await expect(configuredReceipt.getByRole('article',{name:'Approval payment receipt'})).toContainText('Deposit approved');
+	const realActivity=await page.request.get('/api/activity?category=account&limit=100').then(response=>response.json());
+	expect(realActivity.data.items.some((item:{sourceLabel:string;adminInitiated:boolean})=>item.sourceLabel.startsWith('ADMIN:REAL:')&&item.adminInitiated)).toBe(true);
 	await selectAccountMode(page,'DEMO');
 	const after=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
 	expect(after).toBeCloseTo(before+25.5,2);
@@ -1323,7 +1410,7 @@ for(const viewport of viewports){
 test('DEMO order idempotency prevents duplicate fills and user history stays isolated',async({browser,page})=>{
 	await loginAs(page,fixture('LEGACY_USER_EMAIL'),fixture('LEGACY_USER_PASSWORD'));
 	const startingBalance=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
-	expect(startingBalance).toBe(5000);
+	expect(startingBalance).toBe(10000);
 	const symbol=fixture('INSTRUMENT_A');
 	const instruments=await page.request.get('/api/market').then(response=>response.json());
 	const instrument=instruments.find((item:{symbol:string})=>item.symbol===symbol);
