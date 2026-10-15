@@ -1,9 +1,9 @@
 'use client';
 
 import {FormEvent,useEffect,useState} from 'react';
-import {useSession} from 'next-auth/react';
+import {signOut,useSession} from 'next-auth/react';
 import Image from 'next/image';
-import {Bell,Check,KeyRound,ShieldCheck,UserRound} from 'lucide-react';
+import {Bell,Check,KeyRound,ShieldCheck,Trash2,UserRound} from 'lucide-react';
 import Nav from '@/components/Nav';
 import {useLocale} from '@/lib/i18n-context';
 
@@ -19,6 +19,10 @@ export default function Settings(){
 	const [avatarFile,setAvatarFile]=useState<File|null>(null);
 	const [avatarUrl,setAvatarUrl]=useState('');
 	const [avatarSaving,setAvatarSaving]=useState(false);
+	const [showDeleteForm,setShowDeleteForm]=useState(false);
+	const [deletePassword,setDeletePassword]=useState('');
+	const [deleteConfirmation,setDeleteConfirmation]=useState('');
+	const [deleting,setDeleting]=useState(false);
 	const [retryCount,setRetryCount]=useState(0);
 	const {data:session}=useSession();
 	const {translate}=useLocale();
@@ -65,6 +69,18 @@ export default function Settings(){
 		finally{setAvatarSaving(false)}
 	}
 
+	async function deleteAccount(event:FormEvent<HTMLFormElement>){
+		event.preventDefault();
+		if(deleting)return;
+		setDeleting(true);setError('');
+		try{
+			const response=await fetch('/api/account/delete',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({password:deletePassword,confirmation:deleteConfirmation})});
+			const result=response.status===204?null:await response.json();
+			if(!response.ok)throw new Error(result?.error||'Account deletion could not be completed.');
+			await signOut({callbackUrl:'/register?deleted=1'});
+		}catch(exception){setError(exception instanceof Error?exception.message:'Account deletion could not be completed.');setDeleting(false)}
+	}
+
 	const verification=profile?.kycStatus==='APPROVED'?'Approved':profile?.kycStatus==='REJECTED'?'Needs attention':'Pending';
 
 	return <><Nav/><main className="account-page">
@@ -97,6 +113,13 @@ export default function Settings(){
 					<div className="security-row"><span className="security-icon"><KeyRound size={16}/></span><div><b>{translate('twoFactorFlag')}</b><p>{translate('twoFactorSimulation')}</p></div><span className="status-pill">{profile?.twoFactorEnabled?translate('flagOn'):translate('notEnabled')}</span></div>
 					<div className="security-row"><span className="security-icon"><UserRound size={16}/></span><div><b>{translate('currentServerSession')}</b><p>{translate('sessionIdCopy',{sessionId:session?.user.sessionId||translate('loading')})}</p></div><span className="status-pill">{translate('oneActiveSession')}</span></div>
 					<div className="account-callout mt-4"><Bell size={16}/><span>{translate('notificationBellCopy')}</span></div>
+					<section className="mt-6 border-t border-white/10 pt-5" aria-labelledby="delete-account-heading"><div className="flex items-center gap-2"><Trash2 size={17} className="text-loss"/><h3 id="delete-account-heading" className="font-semibold">Delete My Account</h3></div><p className="mt-2 max-w-2xl text-sm muted">Deleting your account closes access and removes personal profile, identity, and support data. You will lose access to account history. Anonymized ledger and audit records may remain to preserve financial integrity.</p>
+						{!showDeleteForm?<button type="button" className="btn mt-4 bg-loss text-black" onClick={()=>setShowDeleteForm(true)}>Delete My Account</button>:<form className="mt-4 grid max-w-xl gap-3" onSubmit={event=>void deleteAccount(event)}>
+							<label className="account-label">Current password<input className="input" type="password" autoComplete="current-password" required maxLength={128} value={deletePassword} onChange={event=>setDeletePassword(event.target.value)}/></label>
+							<label className="account-label">Type DELETE to confirm<input className="input" autoComplete="off" required value={deleteConfirmation} onChange={event=>setDeleteConfirmation(event.target.value)}/></label>
+							<div className="flex flex-wrap gap-2"><button type="submit" className="btn bg-loss text-black" disabled={deleting||deleteConfirmation!=='DELETE'} aria-busy={deleting}>{deleting?'Deleting account…':'Confirm account deletion'}</button><button type="button" className="btn bg-white/5" disabled={deleting} onClick={()=>{setShowDeleteForm(false);setDeletePassword('');setDeleteConfirmation('')}}>Cancel</button></div>
+						</form>}
+					</section>
 				</section>}
 				{section==='preferences'&&<section className="account-panel card p-5" role="tabpanel"><div className="account-panel-title"><div><h2>{translate('preferences')}</h2><p className="account-panel-subtitle">{translate('preferencesSubtitle')}</p></div><Bell size={18} className="gold" aria-hidden="true"/></div><div className="account-empty">{translate('notificationDelivery')}</div></section>}
 			</div>

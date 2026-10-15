@@ -6,7 +6,26 @@ import {simulatedInvestmentPayout} from '@/lib/investment-policy';
 
 const batchSize=100;
 
+async function activateScheduledSimulatedInvestments(now:Date){
+	const scheduled=await db.investmentRequest.findMany({where:{status:InvestmentStatus.APPROVED,activatedAt:{lte:now},maturesAt:{not:null}},select:{id:true},orderBy:{activatedAt:'asc'},take:batchSize});
+	let activatedCount=0;
+	for(const {id} of scheduled){
+		const activated=await db.$transaction(async tx=>{
+			const current=await tx.investmentRequest.findUnique({where:{id}});
+			if(!current||current.status!==InvestmentStatus.APPROVED||!current.activatedAt||current.activatedAt>now||!current.maturesAt)return false;
+			const changed=await tx.investmentRequest.updateMany({where:{id:current.id,status:InvestmentStatus.APPROVED,activatedAt:{lte:now}},data:{status:InvestmentStatus.ACTIVE}});
+			if(changed.count!==1)return false;
+			await tx.auditLog.create({data:{actorId:null,action:'SIMULATED_INVESTMENT_AUTO_ACTIVATED',entity:'INVESTMENT',entityId:current.id,metadata:{accountMode:current.accountMode,simulated:true,activatedAt:current.activatedAt.toISOString(),maturesAt:current.maturesAt.toISOString()}}});
+			await createNotification(tx,{userId:current.userId,type:NotificationType.SYSTEM,title:'Simulated investment started',message:'Your administrator-scheduled simulated investment is now active.',dedupeKey:`investment:${current.id}:auto-activated`,relatedEntity:'INVESTMENT',relatedId:current.id,actionUrl:'/investments'});
+			return true;
+		},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+		if(activated)activatedCount++;
+	}
+	return activatedCount;
+}
+
 export async function settleMaturedSimulatedInvestments(now=new Date()){
+	await activateScheduledSimulatedInvestments(now);
 	const matured=await db.investmentRequest.findMany({where:{accountMode:{in:[AccountMode.DEMO,AccountMode.REAL]},status:InvestmentStatus.ACTIVE,maturesAt:{lte:now}},select:{id:true},orderBy:{maturesAt:'asc'},take:batchSize});
 	let settledCount=0;
 	for(const {id} of matured){

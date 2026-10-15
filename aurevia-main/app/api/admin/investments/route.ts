@@ -4,8 +4,8 @@ import {AccountMode,InvestmentOpportunityStatus,InvestmentRisk,InvestmentStatus,
 import {z,ZodError} from 'zod';
 import {requireAdmin} from '@/lib/auth';
 import {db} from '@/lib/db';
-import {balance,ensureSystemAccount,ensureUserLedger,postDoubleEntry} from '@/lib/ledger';
-import {InvestmentAction,nextInvestmentStatus,validateInvestmentSettlement} from '@/lib/investment-policy';
+import {balance,ensureSystemAccount,ensureUserLedger,postDoubleEntry,reservedWithdrawalAmount} from '@/lib/ledger';
+import {InvestmentAction,nextInvestmentStatus,simulatedInvestmentPayout} from '@/lib/investment-policy';
 import {createNotification} from '@/lib/notifications';
 import {jsonSafe} from '@/lib/serializers';
 
@@ -43,8 +43,12 @@ const lifecycleSchema=z.object({
  action:z.enum(['approve','reject','activate','pause','complete','cancel','settle']),
  requestId:z.string().min(1),
  note:z.string().trim().max(500).optional(),
- simulatedPayout:z.number().min(0).max(1_000_000_000).optional(),
 });
+const initiationSchema=z.object({
+  action:z.literal('initiate'),userId:z.string().min(1),opportunityId:z.string().min(1),accountMode:z.nativeEnum(AccountMode),
+  amount:z.number().positive().max(1_000_000_000),targetReturnPercent:z.number().min(-100).max(1000).nullable(),startsAt:z.coerce.date(),maturesAt:z.coerce.date(),
+});
+const requestKeyPattern=/^[a-zA-Z0-9_-]{12,128}$/;
 
 export async function GET(){
  try{
@@ -63,7 +67,51 @@ export async function GET(){
 export async function POST(request:Request){
  try{
   const admin=await requireAdmin();
-  const input=opportunitySchema.parse(await request.json());
+  const body=await request.json() as {action?:string};
+  if(body.action==='initiate'){
+   const input=initiationSchema.parse(body);
+   const idempotencyKey=request.headers.get('Idempotency-Key')||'';
+   if(!requestKeyPattern.test(idempotencyKey))return NextResponse.json({error:'A valid idempotency key is required.'},{status:400});
+   if(input.maturesAt<=input.startsAt)throw new Error('INVALID_INVESTMENT_DATES');
+   const durationDays=Math.ceil((input.maturesAt.getTime()-input.startsAt.getTime())/86_400_000);
+   if(durationDays<1||durationDays>3650)throw new Error('INVALID_INVESTMENT_DURATION');
+   const result=await db.$transaction(async tx=>{
+    const prior=await tx.investmentRequest.findUnique({where:{idempotencyKey},include:{opportunity:{select:{targetReturnPercent:true}}}});
+    if(prior){
+     const expectedTarget=input.targetReturnPercent===null?prior.opportunity.targetReturnPercent:new Prisma.Decimal(input.targetReturnPercent);
+     const matchingTarget=expectedTarget===null?prior.targetReturnPercent===null:prior.targetReturnPercent?.equals(expectedTarget)===true;
+     const matches=prior.userId===input.userId&&prior.opportunityId===input.opportunityId&&prior.accountMode===input.accountMode&&prior.amount.equals(input.amount)&&matchingTarget&&prior.activatedAt?.getTime()===input.startsAt.getTime()&&prior.maturesAt?.getTime()===input.maturesAt.getTime();
+     if(!matches)throw new Error('IDEMPOTENCY_KEY_REUSED');
+     return {investment:prior,replay:true};
+    }
+    const [user,opportunity]=await Promise.all([
+     tx.user.findUnique({where:{id:input.userId},select:{id:true,status:true,role:true,accountRestricted:true}}),
+     tx.investmentOpportunity.findUnique({where:{id:input.opportunityId}}),
+    ]);
+    if(!user||user.status!=='ACTIVE'||user.role!=='USER')throw new Error('INVESTMENT_USER_UNAVAILABLE');
+    if(user.accountRestricted)throw new Error('INVESTMENT_USER_RESTRICTED');
+    if(!opportunity||opportunity.status!==InvestmentOpportunityStatus.AVAILABLE)throw new Error('INVESTMENT_UNAVAILABLE');
+    if(input.accountMode===AccountMode.DEMO&&!opportunity.demoEligible||input.accountMode===AccountMode.REAL&&!opportunity.realEligible)throw new Error('INVESTMENT_MODE_UNAVAILABLE');
+    if(input.amount<Number(opportunity.minimumAmount)||(opportunity.maximumAmount&&input.amount>Number(opportunity.maximumAmount)))throw new Error('INVESTMENT_AMOUNT_OUT_OF_RANGE');
+    if(opportunity.startsAt&&input.startsAt<opportunity.startsAt)throw new Error('INVESTMENT_NOT_STARTED');
+    const amount=new Prisma.Decimal(input.amount);
+    const targetReturnPercent=input.targetReturnPercent===null?opportunity.targetReturnPercent:new Prisma.Decimal(input.targetReturnPercent);
+    const now=new Date();
+    const status=input.startsAt<=now?InvestmentStatus.ACTIVE:InvestmentStatus.APPROVED;
+    const investment=await tx.investmentRequest.create({data:{userId:user.id,opportunityId:opportunity.id,accountMode:input.accountMode,amount,status,idempotencyKey,targetReturnPercent,durationDays,approvedAt:now,activatedAt:input.startsAt,maturesAt:input.maturesAt}});
+    const userAccount=await ensureUserLedger(tx,user.id,input.accountMode,'USD');
+    const available=await balance(tx,userAccount.id);
+    const reserved=await reservedWithdrawalAmount(tx,user.id,input.accountMode,'USD');
+    if(available.lt(amount.plus(reserved)))throw new Error('INSUFFICIENT_SIMULATED_BALANCE');
+    const escrow=await ensureSystemAccount(tx,`SYSTEM:INVESTMENT_ESCROW:${input.accountMode}:USD`,`${input.accountMode} simulated investment escrow`,'USD',input.accountMode);
+    await postDoubleEntry(tx,{reference:`INVESTMENT:${investment.id}:RESERVE`,description:`Reserve simulated funds for ${opportunity.title}`,debitAccountId:userAccount.id,creditAccountId:escrow.id,amount});
+    await tx.auditLog.create({data:{actorId:admin.id,action:'INVESTMENT_ADMIN_INITIATED',entity:'INVESTMENT',entityId:investment.id,metadata:{userId:user.id,opportunityId:opportunity.id,accountMode:input.accountMode,amount:amount.toString(),targetReturnPercent:targetReturnPercent?.toString()??null,durationDays,startsAt:input.startsAt.toISOString(),maturesAt:input.maturesAt.toISOString(),idempotencyKey,simulated:true}}});
+    await createNotification(tx,{userId:user.id,type:NotificationType.SYSTEM,title:'Simulated investment initiated',message:`An administrator initiated the ${opportunity.title} simulated investment. ${status===InvestmentStatus.ACTIVE?'It is active now.':`It is scheduled to start ${input.startsAt.toISOString()}.`} The principal was reserved in the internal ledger.`,dedupeKey:`investment:${investment.id}:admin-initiated`,relatedEntity:'INVESTMENT',relatedId:investment.id,actionUrl:'/investments'});
+    return {investment,replay:false};
+   },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+   return NextResponse.json(jsonSafe(result.investment),{status:result.replay?200:201,headers:{'Cache-Control':'private, no-store'}});
+  }
+  const input=opportunitySchema.parse(body);
   const opportunity=await db.$transaction(async tx=>{
    const created=await tx.investmentOpportunity.create({data:{...input,createdById:admin.id}});
     await tx.auditLog.create({data:{actorId:admin.id,action:'INVESTMENT_OPPORTUNITY_CREATED',entity:'INVESTMENT_OPPORTUNITY',entityId:created.id,metadata:{newState:{title:created.title,category:created.category,assetSymbol:created.assetSymbol,minimumAmount:created.minimumAmount.toString(),maximumAmount:created.maximumAmount?.toString()??null,targetReturnPercent:created.targetReturnPercent?.toString()??null,durationDays:created.durationDays,startsAt:created.startsAt?.toISOString()??null,maturesAt:created.maturesAt?.toISOString()??null,riskLevel:created.riskLevel,status:created.status,demoEligible:created.demoEligible,realEligible:created.realEligible,requiresApproval:created.requiresApproval,targetPrice:created.targetPrice?.toString()??null,stopPrice:created.stopPrice?.toString()??null}}}});
@@ -74,6 +122,9 @@ export async function POST(request:Request){
   if(error instanceof ZodError)return NextResponse.json({error:'Check the investment terms, amounts, dates, and eligibility.'},{status:400});
   if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
   if(error instanceof Error&&error.message==='FORBIDDEN')return NextResponse.json({error:'Forbidden'},{status:403});
+  if(error instanceof Error&&['IDEMPOTENCY_KEY_REUSED','INVESTMENT_UNAVAILABLE','INVESTMENT_MODE_UNAVAILABLE','INVESTMENT_USER_UNAVAILABLE','INVESTMENT_USER_RESTRICTED','INVESTMENT_NOT_STARTED'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:409});
+  if(error instanceof Error&&['INVESTMENT_AMOUNT_OUT_OF_RANGE','INSUFFICIENT_SIMULATED_BALANCE','INVALID_INVESTMENT_DATES','INVALID_INVESTMENT_DURATION'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:400});
+  if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')return NextResponse.json({error:'This investment initiation was already received.'},{status:409});
   return NextResponse.json({error:'Unable to create the investment opportunity.'},{status:400});
  }
 }
@@ -109,11 +160,13 @@ export async function PATCH(request:Request){
    const nextStatus=nextInvestmentStatus(current.status,action);
    if(action==='activate'){
     if(current.opportunity.startsAt&&current.opportunity.startsAt>new Date())throw new Error('INVESTMENT_NOT_STARTED');
+    if(current.activatedAt&&current.activatedAt>new Date())throw new Error('INVESTMENT_NOT_STARTED');
     if(current.opportunity.maturesAt&&current.opportunity.maturesAt<=new Date())throw new Error('INVESTMENT_OPPORTUNITY_MATURED');
    }
    let settlementReference:string|undefined;
+  let simulatedPayout:Prisma.Decimal|undefined;
    if(action==='settle'){
-    validateInvestmentSettlement(input.simulatedPayout);
+   simulatedPayout=simulatedInvestmentPayout(current.amount,current.targetReturnPercent);
     settlementReference=`SIMULATED-SETTLEMENT:${current.accountMode}:${current.id}`;
    }
    const now=new Date();
@@ -127,7 +180,7 @@ export async function PATCH(request:Request){
    if(action==='settle'){
     updateData.settledAt=now;
     updateData.settlementReference=settlementReference;
-    updateData.simulatedPayout=new Prisma.Decimal(input.simulatedPayout!);
+    updateData.simulatedPayout=simulatedPayout;
    }
    const changed=await tx.investmentRequest.updateMany({where:{id:current.id,status:current.status},data:updateData});
    if(changed.count!==1)throw new Error('INVESTMENT_STATE_CHANGED');
@@ -143,7 +196,7 @@ export async function PATCH(request:Request){
    if(action==='settle'){
     const reservation=await tx.ledgerTransaction.findUnique({where:{reference:`INVESTMENT:${current.id}:RESERVE`},select:{id:true}});
     if(!reservation)throw new Error('SIMULATED_INVESTMENT_RESERVATION_MISSING');
-    const payout=new Prisma.Decimal(input.simulatedPayout!);
+    const payout=simulatedPayout!;
     const principal=payout.lt(current.amount)?payout:current.amount;
     const escrow=await ensureSystemAccount(tx,`SYSTEM:INVESTMENT_ESCROW:${current.accountMode}:USD`,`${current.accountMode} simulated investment escrow`,'USD',current.accountMode);
     const userAccount=await ensureUserLedger(tx,current.userId,current.accountMode,'USD');
@@ -157,7 +210,7 @@ export async function PATCH(request:Request){
     }
    }
    const updated=await tx.investmentRequest.findUniqueOrThrow({where:{id:current.id}});
-   await tx.auditLog.create({data:{actorId:admin.id,action:`INVESTMENT_${nextStatus}`,entity:'INVESTMENT',entityId:current.id,metadata:{oldState:current.status,newState:nextStatus,accountMode:current.accountMode,simulated:true,amount:current.amount.toString(),externalExecutionReference:null,settlementReference:settlementReference||null,simulatedPayout:action==='settle'?String(input.simulatedPayout):null,note:input.note||null}}});
+  await tx.auditLog.create({data:{actorId:admin.id,action:`INVESTMENT_${nextStatus}`,entity:'INVESTMENT',entityId:current.id,metadata:{oldState:current.status,newState:nextStatus,accountMode:current.accountMode,simulated:true,amount:current.amount.toString(),externalExecutionReference:null,settlementReference:settlementReference||null,simulatedPayout:simulatedPayout?.toString()??null,note:input.note||null}}});
    const statusText=nextStatus.toLowerCase().replaceAll('_',' ');
    const message=`Your ${current.accountMode} investment is ${statusText}. This is simulated activity; any payout is a virtual ledger result, not an external investment or return.`;
    await createNotification(tx,{userId:current.userId,type:NotificationType.SYSTEM,title:`Investment ${statusText}`,message,dedupeKey:`investment:${current.id}:${nextStatus}:${updated.updatedAt.toISOString()}`,relatedEntity:'INVESTMENT',relatedId:current.id,actionUrl:'/investments'});

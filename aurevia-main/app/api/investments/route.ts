@@ -3,7 +3,7 @@ import {AccountMode,InvestmentOpportunityStatus,InvestmentStatus,NotificationTyp
 import {z,ZodError} from 'zod';
 import {requireUser} from '@/lib/auth';
 import {db} from '@/lib/db';
-import {balance,ensureSystemAccount,ensureUserLedger,postDoubleEntry} from '@/lib/ledger';
+import {balance,ensureSystemAccount,ensureUserLedger,postDoubleEntry,reservedWithdrawalAmount} from '@/lib/ledger';
 import {createNotification,notifyActiveAdmins} from '@/lib/notifications';
 import {jsonSafe} from '@/lib/serializers';
 
@@ -25,7 +25,9 @@ export async function GET(){
    db.investmentRequest.findMany({where:{userId:user.id,accountMode:user.accountMode},include:{opportunity:{select:{title:true,category:true,assetSymbol:true,riskLevel:true,targetReturnPercent:true,durationDays:true}}},orderBy:{requestedAt:'desc'},take:100}),
    db.ledgerAccount.findUnique({where:{code:`USER:${user.id}:${user.accountMode}:USD`},select:{id:true}}),
   ]);
-  return NextResponse.json(jsonSafe({accountMode:user.accountMode,availableBalance:account?await balance(db,account.id):new Prisma.Decimal(0),opportunities,requests}),{headers:{'Cache-Control':'private, no-store'}});
+    const [ledgerBalance,reserved]=await Promise.all([account?balance(db,account.id):new Prisma.Decimal(0),reservedWithdrawalAmount(db,user.id,user.accountMode,'USD')]);
+    const availableBalance=Prisma.Decimal.max(new Prisma.Decimal(0),ledgerBalance.minus(reserved));
+    return NextResponse.json(jsonSafe({accountMode:user.accountMode,availableBalance,opportunities,requests}),{headers:{'Cache-Control':'private, no-store'}});
  }catch(error){
   return NextResponse.json({error:error instanceof Error&&error.message==='UNAUTHORIZED'?'Unauthorized':'Unable to load investments.'},{status:error instanceof Error&&error.message==='UNAUTHORIZED'?401:503,headers:{'Cache-Control':'private, no-store'}});
  }
@@ -55,7 +57,8 @@ export async function POST(request:Request){
    const investment=await tx.investmentRequest.create({data:{userId:user.id,opportunityId:opportunity.id,accountMode:user.accountMode,amount,status,idempotencyKey,targetReturnPercent:opportunity.targetReturnPercent,durationDays:opportunity.durationDays,approvedAt}});
    const userAccount=await ensureUserLedger(tx,user.id,user.accountMode,'USD');
    const available=await balance(tx,userAccount.id);
-   if(available.lt(amount))throw new Error('INSUFFICIENT_SIMULATED_BALANCE');
+    const reserved=await reservedWithdrawalAmount(tx,user.id,user.accountMode,'USD');
+    if(available.lt(amount.plus(reserved)))throw new Error('INSUFFICIENT_SIMULATED_BALANCE');
    const escrow=await ensureSystemAccount(tx,`SYSTEM:INVESTMENT_ESCROW:${user.accountMode}:USD`,`${user.accountMode} simulated investment escrow`,'USD',user.accountMode);
    await postDoubleEntry(tx,{reference:`INVESTMENT:${investment.id}:RESERVE`,description:`Reserve simulated funds for ${opportunity.title}`,debitAccountId:userAccount.id,creditAccountId:escrow.id,amount});
    await tx.auditLog.create({data:{actorId:user.id,action:'INVESTMENT_SUBMITTED',entity:'INVESTMENT',entityId:investment.id,metadata:{opportunityId:opportunity.id,accountMode:user.accountMode,amount:amount.toString(),status,simulated:true}}});

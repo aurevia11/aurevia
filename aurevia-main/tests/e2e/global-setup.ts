@@ -36,6 +36,9 @@ export default async function globalSetup(){
 	const adminEmail=`aurevia-e2e-admin-${runId}@example.invalid`;
 	const legacyUserEmail=`aurevia-e2e-legacy-${runId}@example.invalid`;
 	const investorEmail=`aurevia-e2e-investor-${runId}@example.invalid`;
+	const deletionUserId=`e2e-delete-user-${runId}`;
+	const deletionEmail=`aurevia-e2e-delete-${runId}@example.invalid`;
+	const deletionPassword=`Aa1!${randomBytes(20).toString('hex')}`;
 	const userPassword=`Aa1!${randomBytes(20).toString('hex')}`;
 	const adminPassword=`Aa1!${randomBytes(20).toString('hex')}`;
 	const legacyUserPassword=`Aa1!${randomBytes(20).toString('hex')}`;
@@ -51,7 +54,7 @@ export default async function globalSetup(){
 	let paymentMethodId:string|undefined;
 	const stateFile=join(tmpdir(),'aurevia-e2e-state.json');
 
-	const state={runId,userId,adminId,legacyUserId,investorId,userEmail,adminEmail,legacyUserEmail,investorEmail,userPassword,adminPassword,legacyUserPassword,investorPassword,registrationEmail,registrationPassword,instrumentIds,symbols};
+	const state={runId,userId,adminId,legacyUserId,investorId,deletionUserId,deletionEmail,userEmail,adminEmail,legacyUserEmail,investorEmail,userPassword,adminPassword,legacyUserPassword,investorPassword,deletionPassword,registrationEmail,registrationPassword,instrumentIds,symbols};
 	process.env.AUREVIA_E2E_USER_EMAIL=userEmail;
 	process.env.AUREVIA_E2E_USER_PASSWORD=userPassword;
 	process.env.AUREVIA_E2E_ADMIN_EMAIL=adminEmail;
@@ -60,6 +63,9 @@ export default async function globalSetup(){
 	process.env.AUREVIA_E2E_LEGACY_USER_PASSWORD=legacyUserPassword;
 	process.env.AUREVIA_E2E_INVESTOR_EMAIL=investorEmail;
 	process.env.AUREVIA_E2E_INVESTOR_PASSWORD=investorPassword;
+	process.env.AUREVIA_E2E_DELETE_USER_ID=deletionUserId;
+	process.env.AUREVIA_E2E_DELETE_EMAIL=deletionEmail;
+	process.env.AUREVIA_E2E_DELETE_PASSWORD=deletionPassword;
 	process.env.AUREVIA_E2E_REGISTRATION_EMAIL=registrationEmail;
 	process.env.AUREVIA_E2E_REGISTRATION_PASSWORD=registrationPassword;
 	process.env.AUREVIA_E2E_INSTRUMENT_A=symbols[0];
@@ -73,6 +79,7 @@ export default async function globalSetup(){
 		await db.user.create({data:{id:adminId,email:adminEmail,name:'Temporary E2E Administrator',country:'Test',passwordHash:await bcrypt.hash(adminPassword,10),role:Role.ADMIN,accountMode:AccountMode.DEMO,status:UserStatus.ACTIVE,requiresRegistrationVerification:true}});
 		await db.user.create({data:{id:legacyUserId,email:legacyUserEmail,name:'Legacy E2E User',country:'Test',passwordHash:await bcrypt.hash(legacyUserPassword,10),accountMode:AccountMode.DEMO,status:UserStatus.ACTIVE}});
 				await db.user.create({data:{id:investorId,email:investorEmail,name:'Investment E2E User',country:'Test',passwordHash:await bcrypt.hash(investorPassword,10),accountMode:AccountMode.DEMO,status:UserStatus.ACTIVE,kycStatus:KycStatus.APPROVED,verifiedAt:new Date()}});
+				await db.user.create({data:{id:deletionUserId,email:deletionEmail,name:'Temporary Deletion User',country:'Test',passwordHash:await bcrypt.hash(deletionPassword,10),accountMode:AccountMode.DEMO,status:UserStatus.ACTIVE}});
 		const instruments=await Promise.all([...symbols,cryptoSymbol].map((symbol,index)=>db.instrument.create({data:{symbol,name:index===2?'E2E simulated Bitcoin':`E2E simulated instrument ${index+1}`,baseAsset:index===2?'BTC':`E2E${index+1}`,quoteAsset:'USD',price:index===0?10:index===1?20:65000,enabled:true}})));
 		instrumentIds.push(...instruments.map(instrument=>instrument.id));
 		const btcUsd=await db.instrument.upsert({where:{symbol:'BTC/USD'},update:{},create:{symbol:'BTC/USD',name:'E2E simulated BTC/USD',baseAsset:'BTC',quoteAsset:'USD',price:92500,enabled:true}});
@@ -81,6 +88,8 @@ export default async function globalSetup(){
 			await initializeDemoAccount(tx,userId);
 			await initializeDemoAccount(tx,legacyUserId);
 			await initializeDemoAccount(tx,investorId);
+			await initializeDemoAccount(tx,deletionUserId);
+			await tx.kycProfile.create({data:{userId:deletionUserId,legalName:'Temporary Deletion User',dob:new Date('1990-01-01'),address:'Private Test Address',idType:'PASSPORT',idNumber:`DELETE-${runId}`,submittedAt:new Date()}});
 			await tx.kycProfile.create({data:{userId:investorId,legalName:'Investment E2E User',dob:new Date('1990-01-01'),address:'123 Test Street',idType:'PASSPORT',idNumber:`E2E-${runId}`,submittedAt:new Date()}});
 			const document=await tx.kycDocument.create({data:{userId:investorId,kind:'IDENTITY_DOCUMENT',filename:'e2e-identity.pdf',storageKey:`${investorId}/${randomUUID()}.pdf`,mimeType:'application/pdf',size:128,status:'APPROVED'}});
 			process.env.AUREVIA_E2E_KYC_DOCUMENT_ID=document.id;
@@ -97,7 +106,7 @@ export default async function globalSetup(){
 		process.env.AUREVIA_E2E_REAL_DEPOSIT_ID=realDepositId;
 		process.env.AUREVIA_E2E_REAL_DEPOSIT_NO_PROOF_ID=realDepositWithoutReceiptId;
 		process.env.AUREVIA_E2E_REAL_WITHDRAWAL_ID=realWithdrawalId;
-				const cleanupState={runId,userId,adminId,legacyUserId,investorId,registrationEmail,instrumentIds,paymentMethodId};
+				const cleanupState={runId,userId,adminId,legacyUserId,investorId,deletionUserId,deletionEmail,registrationEmail,instrumentIds,paymentMethodId};
 		await writeFile(stateFile,JSON.stringify(cleanupState),{encoding:'utf8',mode:0o600});
 	}catch(error){
 				await cleanup(db,{...state,paymentMethodId}).catch(()=>undefined);
@@ -107,10 +116,12 @@ export default async function globalSetup(){
 	}
 }
 
-export async function cleanup(db:PrismaClient,state:{userId:string;adminId:string;legacyUserId?:string;investorId?:string;registrationEmail?:string;instrumentIds:string[];paymentMethodId?:string}){
+export async function cleanup(db:PrismaClient,state:{userId:string;adminId:string;legacyUserId?:string;investorId?:string;deletionUserId?:string;deletionEmail?:string;registrationEmail?:string;instrumentIds:string[];paymentMethodId?:string}){
 	const registeredUser=state.registrationEmail?await db.user.findUnique({where:{email:state.registrationEmail},select:{id:true}}):null;
-	const userIds=[state.userId,state.adminId,...(state.legacyUserId?[state.legacyUserId]:[]),...(state.investorId?[state.investorId]:[]),...(registeredUser?[registeredUser.id]:[])];
+	const replacementUser=state.deletionEmail?await db.user.findUnique({where:{email:state.deletionEmail},select:{id:true}}):null;
+	const userIds=[state.userId,state.adminId,...(state.legacyUserId?[state.legacyUserId]:[]),...(state.investorId?[state.investorId]:[]),...(state.deletionUserId?[state.deletionUserId]:[]),...(registeredUser?[registeredUser.id]:[]),...(replacementUser?[replacementUser.id]:[])];
 	await db.investmentRequest.deleteMany({where:{userId:{in:userIds}}});
+	await db.broadcast.deleteMany({where:{createdById:{in:userIds}}});
 	await db.investmentOpportunity.deleteMany({where:{createdById:{in:userIds}}});
 	await db.auditLog.deleteMany({where:{OR:[{actorId:{in:userIds}},{entityId:{in:userIds}}]}});
 	const accounts=await db.ledgerAccount.findMany({where:{userId:{in:userIds}},select:{id:true}});

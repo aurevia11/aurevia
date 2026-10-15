@@ -184,6 +184,14 @@ enum InvestmentStatus {
   SETTLED
 }
 
+enum BroadcastStatus {
+  DRAFT
+  SCHEDULED
+  PUBLISHED
+  ENDED
+  ARCHIVED
+}
+
 model User {
   id String @id @default(cuid())
   email String @unique
@@ -228,6 +236,7 @@ model User {
   investments InvestmentRequest[]
   portfolioSnapshots PortfolioSnapshot[]
   createdInvestmentOpportunities InvestmentOpportunity[] @relation("InvestmentOpportunityCreator")
+  createdBroadcasts Broadcast[] @relation("BroadcastCreator")
   waitlistEntry WaitlistEntry?
   tierRequests TierUpgradeRequest[] @relation("TierRequestUser")
   tierReviews TierUpgradeRequest[] @relation("TierRequestReviewer")
@@ -565,6 +574,24 @@ model SystemSetting {
   key String @id
   value String
   updatedAt DateTime @updatedAt
+}
+
+model Broadcast {
+  id String @id @default(cuid())
+  title String @db.VarChar(120)
+  description String @db.VarChar(3000)
+  streamUrl String? @db.VarChar(2048)
+  startsAt DateTime?
+  status BroadcastStatus @default(DRAFT)
+  publishedAt DateTime?
+  endedAt DateTime?
+  archivedAt DateTime?
+  createdById String
+  createdBy User @relation("BroadcastCreator",fields:[createdById],references:[id],onDelete:Restrict)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([status,startsAt])
+  @@index([createdAt])
 }
 model AuditLog {
   id String @id @default(cuid())

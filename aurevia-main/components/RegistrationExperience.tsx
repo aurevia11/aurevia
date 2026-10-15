@@ -64,8 +64,6 @@ export default function RegistrationExperience(){
 	return <><Nav/><main className="auth-scene"><section className="auth-card auth-register-card" aria-labelledby="registration-title">
 		<div className="auth-brand"><Image src="/aurevia-logo.png" alt="" width={48} height={48}/><span>AUREVIA <b>INVEST</b></span></div>
 			<h1 id="registration-title" className="auth-heading">{translate('createAccountTitle')}</h1>
-			<p className="auth-subtitle">{translate('accountDetails')}</p>
-			<p className="text-sm muted">Create an account with an email address and password. No external sign-in or email/SMS verification provider is required. Account eligibility is reviewed by an administrator.</p>
 			<nav className="register-section-jump" aria-label="Registration sections"><a href="#register-profile">{translate('personalInformation')}</a><a href="#register-contact">{translate('contactInformation')}</a><a href="#register-security">{translate('security')}</a><a href="#register-account">{translate('accountType')}</a></nav>
 			<form onSubmit={submit} className="register-form space-y-4">
 				<fieldset id="register-profile" className="register-form-section"><legend className="sr-only">{translate('personalInformation')}</legend><h2>{translate('personalInformation')}</h2><div className="grid gap-3 sm:grid-cols-2">

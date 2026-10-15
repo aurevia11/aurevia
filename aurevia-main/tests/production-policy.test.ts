@@ -1,7 +1,7 @@
 import {describe,expect,it} from 'vitest';
 import {AccountMode,KycStatus} from '@prisma/client';
 import {DEMO_STARTING_BALANCE} from '../lib/ledger';
-import {getAccountTier,validateDepositApproval,validateTierThreeApproval,validateTierUpgradeApproval,validateWithdrawal,verifyKycState} from '../lib/production-policy';
+import {assertKycSubmissionAllowed,getAccountTier,validateDepositApproval,validateTierThreeApproval,validateTierUpgradeApproval,validateWithdrawal,verifyKycState} from '../lib/production-policy';
 
 describe('production account policy',()=>{
   it('starts every demo account with exactly 5,000 simulated USD',()=>{
@@ -54,5 +54,11 @@ describe('production account policy',()=>{
     expect(verifyKycState(KycStatus.APPROVED)).toBe(true);
     expect(verifyKycState(KycStatus.PENDING)).toBe(false);
     expect(verifyKycState(KycStatus.REJECTED)).toBe(false);
+  });
+
+  it('prevents approved users from resubmitting KYC unless an administrator requests changes',()=>{
+    expect(()=>assertKycSubmissionAllowed(KycStatus.APPROVED)).toThrow('KYC_ALREADY_APPROVED');
+    expect(()=>assertKycSubmissionAllowed(KycStatus.NEEDS_CHANGES)).not.toThrow();
+    expect(()=>assertKycSubmissionAllowed(KycStatus.PENDING)).not.toThrow();
   });
 });

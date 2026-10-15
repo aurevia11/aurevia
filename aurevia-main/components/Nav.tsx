@@ -3,7 +3,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import {useSession,signOut} from 'next-auth/react';
 import {usePathname,useRouter} from 'next/navigation';
-import {LogOut,LayoutDashboard,LineChart,Wallet,ShieldCheck,Settings,Menu,X,PhoneCall,Mail} from 'lucide-react';
+import {LogOut,LayoutDashboard,LineChart,Wallet,ShieldCheck,Settings,Menu,X,PhoneCall,Mail,Radio} from 'lucide-react';
 import {useEffect,useState} from 'react';
 import NotificationBell from '@/components/NotificationBell';
 import LanguageSelector from '@/components/LanguageSelector';
@@ -54,6 +54,7 @@ export default function Nav(){
       <h2 className="nav-menu-section" id="nav-portfolio-heading">PORTFOLIO</h2>
       <Link href="/orders" onClick={close} aria-current={active('/orders')?'page':undefined}>{translate('orders')}</Link>
       <Link href="/investments" onClick={close} aria-current={active('/investments')?'page':undefined}>{translate('investments')}</Link>
+        <Link href="/broadcasts" onClick={close} aria-current={active('/broadcasts')?'page':undefined}><Radio size={16} aria-hidden="true"/>Live broadcasts</Link>
      </section>
      <section className="nav-menu-group" aria-labelledby="nav-account-heading">
       <h2 className="nav-menu-section" id="nav-account-heading">ACCOUNT &amp; SUPPORT</h2>

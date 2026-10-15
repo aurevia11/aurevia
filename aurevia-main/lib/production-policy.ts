@@ -21,6 +21,9 @@ export function getAccountTier(context:TierContext):{label:AccountTier;progress:
 }
 
 export function verifyKycState(status:KycStatus){return status===KycStatus.APPROVED;}
+export function assertKycSubmissionAllowed(status:KycStatus){
+	if(status===KycStatus.APPROVED)throw new Error('KYC_ALREADY_APPROVED');
+}
 
 export function validateTierUpgradeApproval(input:{requestCurrentTier:number;requestedTier:number;currentTier:number}){
 	if(input.requestCurrentTier!==input.currentTier||input.requestedTier!==input.currentTier+1)throw new Error('TIER_REQUEST_STALE');

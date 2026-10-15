@@ -4,7 +4,7 @@ import {readFile,unlink} from 'node:fs/promises';
 import {PrismaClient} from '@prisma/client';
 import {cleanup} from './global-setup';
 
-type State={userId:string;adminId:string;legacyUserId:string;investorId:string;registrationEmail:string;instrumentIds:string[];paymentMethodId?:string};
+type State={userId:string;adminId:string;legacyUserId:string;investorId:string;deletionUserId:string;deletionEmail:string;registrationEmail:string;instrumentIds:string[];paymentMethodId?:string};
 
 export default async function globalTeardown(){
 	const stateFile=join(tmpdir(),'aurevia-e2e-state.json');

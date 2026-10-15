@@ -4,27 +4,34 @@ import Image from 'next/image';
 import Link from 'next/link';
 import {signOut,useSession} from 'next-auth/react';
 import {usePathname} from 'next/navigation';
-import {ArrowLeft,BriefcaseBusiness,ClipboardCheck,FileCheck2,LayoutDashboard,LogOut,Menu,MessageSquareText,ReceiptText,ScrollText,Settings2,ShieldCheck,UsersRound,X} from 'lucide-react';
+import {ArrowLeft,BriefcaseBusiness,ClipboardCheck,FileCheck2,LayoutDashboard,LogOut,Menu,MessageSquareText,Radio,ReceiptText,ScrollText,Settings2,ShieldCheck,UsersRound,X} from 'lucide-react';
 import {useEffect,useState} from 'react';
 
 const groups=[
 	{title:'Workspace',links:[
 		{href:'/admin',label:'Control room',icon:LayoutDashboard},
+		{href:'/admin/users',label:'User accounts',icon:UsersRound},
+		{href:'/admin/broadcasts',label:'Broadcasts',icon:Radio},
 		{href:'/admin/investments',label:'Investment operations',icon:BriefcaseBusiness},
 		{href:'/admin/payments',label:'Payments',icon:ReceiptText},
+		{href:'/admin/approved-deposits',label:'Approved deposits',icon:ReceiptText},
+		{href:'/admin/approved-withdrawals',label:'Approved withdrawals',icon:ReceiptText},
+		{href:'/admin/settlements',label:'Settlements',icon:ReceiptText},
 		{href:'/admin/markets',label:'Market management',icon:Settings2},
 	]},
 	{title:'Account review',links:[
-		{href:'/admin#kyc-verification',label:'Pending verification',icon:ClipboardCheck},
+		{href:'/admin/kyc',label:'Pending verification',icon:ClipboardCheck},
 		{href:'/admin/verified-accounts',label:'Verified accounts',icon:UsersRound},
 		{href:'/admin/tiers',label:'Tier reviews',icon:FileCheck2},
 	]},
 	{title:'Service & system',links:[
 		{href:'/admin/support',label:'Support inbox',icon:MessageSquareText},
-		{href:'/admin#waitlist',label:'Customer waitlist',icon:UsersRound},
-		{href:'/admin#providers',label:'Provider health',icon:Settings2},
-		{href:'/admin#operations',label:'Orders and ledger',icon:ReceiptText},
-		{href:'/admin#audit-log',label:'Audit log',icon:ScrollText},
+		{href:'/admin/waitlist',label:'Customer waitlist',icon:UsersRound},
+		{href:'/admin/providers',label:'Provider health',icon:Settings2},
+		{href:'/admin/operations',label:'Orders and ledger',icon:ReceiptText},
+		{href:'/admin/receipts',label:'Receipt review',icon:ReceiptText},
+		{href:'/admin/nova',label:'Nova activity',icon:MessageSquareText},
+		{href:'/admin/audit-logs',label:'Audit log',icon:ScrollText},
 	]},
 ];
 
