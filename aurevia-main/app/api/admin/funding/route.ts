@@ -90,6 +90,8 @@ export async function PATCH(req:Request){
 		return NextResponse.json({...jsonSafe(safeRequest),hasReceipt:!!receiptKey,emailDelivery:delivery.sent?'sent':delivery.reason||'failed'},{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){
 		if(error instanceof ZodError)return NextResponse.json({error:'Invalid review details.'},{status:400});
+		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
+		if(error instanceof Error&&error.message==='FORBIDDEN')return NextResponse.json({error:'Forbidden'},{status:403});
 		if(error instanceof Error&&error.message==='FUNDING_SELF_REVIEW_FORBIDDEN')return NextResponse.json({error:'Administrators cannot review their own funding requests.'},{status:403});
 		if(error instanceof Error&&['FUNDING_NOT_PENDING','FUNDING_ALREADY_REVIEWED','INSUFFICIENT_FUNDS','WITHDRAWAL_RESTRICTED','CREDIT_EXCEEDS_REQUEST','DEPOSIT_AMOUNT_MISMATCH','DEPOSIT_RECEIPT_REQUIRED'].includes(error.message))return NextResponse.json({error:error.message==='DEPOSIT_RECEIPT_REQUIRED'?'Upload and review payment evidence before approving this payment-method deposit.':error.message.replaceAll('_',' ').toLowerCase()},{status:409});
 		return NextResponse.json({error:'Funding review failed.'},{status:400});

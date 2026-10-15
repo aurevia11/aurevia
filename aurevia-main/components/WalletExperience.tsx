@@ -22,7 +22,11 @@ type KycData={kycStatus:string;documents:number;verificationProfileSubmitted:boo
 const money=(amount:number,currency='USD')=>`${amount.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:8})} ${currency}`;
 const statuses:Record<string,string>={PENDING:'Pending',PENDING_REVIEW:'Pending review',PROCESSING:'Processing',APPROVED:'Approved · reserved',COMPLETED:'Completed',FAILED:'Failed · reservation released',REVERSED:'Reversed',REJECTED:'Rejected',CANCELLED:'Cancelled'};
 const reserves=['PENDING','PENDING_REVIEW','APPROVED','PROCESSING'];
-const formatFundingMethodLabel=(method:string)=>String(method||'').replace(/^Admin configured\s+/i,'Administrator ').replace(/\s+REAL deposit$/i,' Real Account deposit').replace(/\s+simulated\s+/i,' ');
+const formatFundingMethodLabel=(method:string)=>{
+	const value=String(method||'');
+	if(/^Internal simulated\b/i.test(value))return value;
+	return value.replace(/^Admin configured\s+/i,'Administrator ').replace(/\s+REAL deposit$/i,' Real Account deposit').replace(/\s+simulated\s+/i,' ');
+};
 const fundingUnavailableMessage=(status:PaymentMethodsResponse['fundingStatus'])=>{
 	if(status==='SIMULATED')return 'Internal simulated funding is available after administrator review. No payment is processed.';
 	if(status==='MANUAL_REVIEW')return 'Real Account deposits are reviewed by an administrator before any ledger credit is posted.';

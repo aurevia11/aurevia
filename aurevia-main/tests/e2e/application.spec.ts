@@ -683,7 +683,7 @@ test('account-mode changes refresh and isolate wallet, trade, history, and suppo
 	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
 	const mode=page.getByLabel('Account mode');
 	await page.goto('/wallet');
-	await expect(page.getByText('DEMO ACCOUNT',{exact:true}).last()).toBeVisible();
+	await expect(page.locator('.account-heading .account-kicker')).toContainText('DEMO ACCOUNT');
 	let releaseModeUpdate!:()=>void;
 	const modeUpdateGate=new Promise<void>(resolve=>{releaseModeUpdate=resolve});
 	await page.route('**/api/account/mode',async route=>{await modeUpdateGate;await route.continue()});
@@ -692,7 +692,7 @@ test('account-mode changes refresh and isolate wallet, trade, history, and suppo
 	releaseModeUpdate();
 	await page.unroute('**/api/account/mode');
 	await expect(mode).toHaveValue('REAL');
-	await expect(page.getByText('REAL ACCOUNT',{exact:true}).last()).toBeVisible();
+	await expect(page.locator('.account-heading .account-kicker')).toContainText('REAL ACCOUNT');
 	await expect(page.locator('.wallet-balance-value')).toHaveText('0.00 USD');
 	const instrumentsResponse=await page.request.get('/api/market');
 	const instruments=await instrumentsResponse.json();
@@ -1120,7 +1120,7 @@ test('simulated investment lifecycle and trading work in both account modes',asy
 			await page.goto('/wallet');
 			await expect(page.getByText(/Internal simulated funding/i)).toBeVisible();
 			await expect(page.getByLabel('Amount',{exact:true})).toBeVisible();
-			await expect(page.locator('.transaction-method').filter({hasText:'Simulated Real Account deposit'})).toBeVisible();
+			await expect(page.locator('.transaction-method').filter({hasText:'Internal simulated deposit'})).toBeVisible();
 		await page.goto('/investments');
 		await expect(page.getByText(/REAL investment activity is simulated/i)).toBeVisible();
 		const realRequestResponse=await page.request.post('/api/investments',{headers:{'Idempotency-Key':randomUUID()},data:{opportunityId:opportunity.id,amount:500}});
