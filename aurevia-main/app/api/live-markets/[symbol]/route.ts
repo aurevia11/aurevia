@@ -12,7 +12,9 @@ export async function GET(request:Request,{params}:{params:Promise<{symbol:strin
   const requested=new URL(request.url).searchParams.get('timeframe')||'1d';
   if(!TIMEFRAMES.some(timeframe=>timeframe.id===requested))return NextResponse.json({error:'Unsupported timeframe.'},{status:400});
   try{
-    const history=await getMarketHistory(asset,requested as TimeframeId,getServerConfiguration().marketData.finnhubApiKey);
+    const config=getServerConfiguration();
+    const alpacaData=config.execution.alpacaProvider.toLowerCase()==='alpaca'?{apiKey:config.execution.alpacaTradingApiKey,apiSecret:config.execution.alpacaTradingApiSecret}:undefined;
+    const history=await getMarketHistory(asset,requested as TimeframeId,config.marketData.finnhubApiKey,alpacaData);
     return NextResponse.json(history,{headers:{'Cache-Control':'public, s-maxage=15, stale-while-revalidate=30'}});
   }catch(error){
     const status=error instanceof MarketDataError?error.status:502;

@@ -24,7 +24,8 @@ const methodSchema=z.object({
 export async function GET(){
 	try{
 		await requireAdmin();
-		return NextResponse.json(jsonSafe(await db.paymentMethod.findMany({orderBy:[{displayOrder:'asc'},{name:'asc'}]})));
+		await db.paymentMethod.count();
+		return NextResponse.json([],{headers:{'Cache-Control':'private, no-store'}});
 	}catch{
 		return NextResponse.json({error:'Forbidden'},{status:403});
 	}
@@ -32,35 +33,20 @@ export async function GET(){
 
 export async function POST(req:Request){
 	try{
-		const admin=await requireAdmin();
-		const data=methodSchema.parse(await req.json());
-		const method=await db.$transaction(async tx=>{
-			const created=await tx.paymentMethod.create({data:{...data,currencies:[...new Set(data.currencies.map(currency=>currency.toUpperCase()))]}});
-			await tx.auditLog.create({data:{actorId:admin.id,action:'PAYMENT_METHOD_CREATED',entity:'PAYMENT_METHOD',entityId:created.id,metadata:{name:created.name}}});
-			return created;
-		});
-		return NextResponse.json(jsonSafe(method),{status:201});
+		await requireAdmin();
+		return NextResponse.json({error:'External payment processing is disabled. Funding requests use internal simulation.'},{status:409});
 	}catch(error){
-		if(error instanceof ZodError)return NextResponse.json({error:'Check the payment method fields.'},{status:400});
-		return NextResponse.json({error:'Unable to create payment method.'},{status:400});
+		const status=error instanceof Error&&error.message==='UNAUTHORIZED'?401:403;
+		return NextResponse.json({error:status===401?'Unauthorized':'Forbidden'},{status});
 	}
 }
 
 export async function PATCH(req:Request){
 	try{
-		const admin=await requireAdmin();
-		const body=await req.json();
-		const id=z.string().min(1).parse(body.id);
-		const data=methodSchema.parse(body);
-		const method=await db.$transaction(async tx=>{
-			const updated=await tx.paymentMethod.update({where:{id},data:{...data,currencies:[...new Set(data.currencies.map(currency=>currency.toUpperCase()))]}});
-			await tx.auditLog.create({data:{actorId:admin.id,action:'PAYMENT_METHOD_UPDATED',entity:'PAYMENT_METHOD',entityId:updated.id,metadata:{name:updated.name,enabled:updated.enabled}}});
-			return updated;
-		});
-		return NextResponse.json(jsonSafe(method));
+		await requireAdmin();
+		return NextResponse.json({error:'External payment processing is disabled. Existing records are retained for historical references.'},{status:409});
 	}catch(error){
-		if(error instanceof ZodError)return NextResponse.json({error:'Check the payment method fields.'},{status:400});
-		if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2025')return NextResponse.json({error:'Payment method not found.'},{status:404});
-		return NextResponse.json({error:'Unable to update payment method.'},{status:400});
+		const status=error instanceof Error&&error.message==='UNAUTHORIZED'?401:403;
+		return NextResponse.json({error:status===401?'Unauthorized':'Forbidden'},{status});
 	}
 }

@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {NextResponse} from 'next/server';
-import {AccountMode,FundingStatus,FundingType,NotificationType,Prisma} from '@prisma/client';
+import {FundingStatus,FundingType,NotificationType,Prisma} from '@prisma/client';
 import {z,ZodError} from 'zod';
 import {requireAdmin} from '@/lib/auth';
 import {db} from '@/lib/db';
@@ -17,7 +17,8 @@ export async function POST(req:Request){
 		const input=schema.parse(await req.json());
 		const request=await db.$transaction(async tx=>{
 			const current=await tx.fundingRequest.findUnique({where:{id:input.id}});
-			if(!current||current.type!==FundingType.WITHDRAWAL||current.accountMode!==AccountMode.REAL||current.status!==FundingStatus.APPROVED)throw new Error('WITHDRAWAL_NOT_APPROVED');
+			if(!current||current.type!==FundingType.WITHDRAWAL||current.status!==FundingStatus.APPROVED)throw new Error('WITHDRAWAL_NOT_APPROVED');
+			if(current.userId===admin.id)throw new Error('WITHDRAWAL_SELF_SETTLEMENT_FORBIDDEN');
 			const user=await tx.user.findUnique({where:{id:current.userId},select:{withdrawalEnabled:true,accountRestricted:true}});
 			if(!user?.withdrawalEnabled||user.accountRestricted)throw new Error('WITHDRAWAL_RESTRICTED');
 			const account=await ensureUserLedger(tx,current.userId,current.accountMode,current.currency);
@@ -33,10 +34,10 @@ export async function POST(req:Request){
 				data:{status:FundingStatus.COMPLETED,settlementReference,settledAt:new Date(),adminNote:input.note||current.adminNote},
 			});
 			if(changed.count!==1)throw new Error('WITHDRAWAL_ALREADY_SETTLED');
-			const system=await ensureSystemAccount(tx,`SYSTEM:CONFIGURED:REAL:${current.currency}`,'Configured simulated REAL funds',current.currency,current.accountMode);
-			await postDoubleEntry(tx,{reference:`FUNDING:${current.id}:SETTLED`,description:'Completed simulated REAL withdrawal',debitAccountId:account.id,creditAccountId:system.id,amount:current.amount});
-			await tx.auditLog.create({data:{actorId:admin.id,action:'REAL_SIMULATED_WITHDRAWAL_SETTLED',entity:'FUNDING',entityId:current.id,metadata:{accountMode:current.accountMode,type:current.type,amount:current.amount.toString(),currency:current.currency,settlementReference,simulated:true,note:input.note||null}}});
-			await createNotification(tx,{userId:current.userId,type:NotificationType.WITHDRAWAL,title:'Simulated withdrawal completed',message:`Your simulated withdrawal of ${current.amount.toString()} ${current.currency} has been completed in the internal ledger. No external money was paid.`,dedupeKey:`funding:${current.id}:settled`,relatedEntity:'FUNDING',relatedId:current.id,actionUrl:`/wallet/transactions/${current.id}`});
+			const system=await ensureSystemAccount(tx,`SYSTEM:SIMULATION:WITHDRAWAL:${current.accountMode}:${current.currency}`,`Internal simulated ${current.accountMode} withdrawal clearing`,current.currency,current.accountMode);
+			await postDoubleEntry(tx,{reference:`FUNDING:${current.id}:SETTLED`,description:`Completed simulated ${current.accountMode} withdrawal`,debitAccountId:account.id,creditAccountId:system.id,amount:current.amount});
+			await tx.auditLog.create({data:{actorId:admin.id,action:'SIMULATED_WITHDRAWAL_SETTLED',entity:'FUNDING',entityId:current.id,metadata:{accountMode:current.accountMode,type:current.type,amount:current.amount.toString(),currency:current.currency,settlementReference,simulated:true,note:input.note||null}}});
+			await createNotification(tx,{userId:current.userId,type:NotificationType.WITHDRAWAL,title:'Simulated withdrawal completed',message:`Your simulated ${current.accountMode} withdrawal of ${current.amount.toString()} ${current.currency} has been completed in the internal ledger. No external money was paid.`,dedupeKey:`funding:${current.id}:settled`,relatedEntity:'FUNDING',relatedId:current.id,actionUrl:`/wallet/transactions/${current.id}`});
 			return tx.fundingRequest.findUniqueOrThrow({where:{id:current.id}});
 		},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
 		const {receiptKey,...safeRequest}=request;
@@ -45,7 +46,7 @@ export async function POST(req:Request){
 		if(error instanceof ZodError)return NextResponse.json({error:'Enter a valid withdrawal request and optional audit note.'},{status:400});
 		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
 		if(error instanceof Error&&error.message==='FORBIDDEN')return NextResponse.json({error:'Forbidden'},{status:403});
-		if(error instanceof Error&&['WITHDRAWAL_NOT_APPROVED','WITHDRAWAL_RESTRICTED','INSUFFICIENT_FUNDS','WITHDRAWAL_ALREADY_SETTLED'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:409});
+		if(error instanceof Error&&['WITHDRAWAL_NOT_APPROVED','WITHDRAWAL_RESTRICTED','INSUFFICIENT_FUNDS','WITHDRAWAL_ALREADY_SETTLED','WITHDRAWAL_SELF_SETTLEMENT_FORBIDDEN'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:409});
 		console.error('[admin-funding-settle] Simulated withdrawal settlement failed',error instanceof Error?error.name:'UnknownError');
 		return NextResponse.json({error:'Unable to complete the simulated withdrawal.'},{status:500});
 	}

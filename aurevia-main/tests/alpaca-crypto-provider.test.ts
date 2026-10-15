@@ -1,17 +1,74 @@
 import {afterEach,describe,expect,it,vi} from 'vitest';
-import {AlpacaCryptoProvider,buildAlpacaCryptoClient,createIndividualTradingApiProviderFromEnvironment} from '../lib/providers/alpaca-crypto-provider';
+import {AlpacaCryptoProvider,IndividualAlpacaTradingProvider,buildAlpacaCryptoClient,createIndividualTradingApiProviderFromEnvironment} from '../lib/providers/alpaca-crypto-provider';
 import {AlpacaCryptoMarketDataProvider} from '../lib/providers/alpaca-crypto.market-data';
 
 afterEach(()=>vi.unstubAllEnvs());
 
 describe('Alpaca crypto provider safety',()=>{
 	it('selects the Individual Trading API from ALPACA_PROVIDER and rejects unsafe URLs',()=>{
-		for(const [name,value] of Object.entries({ALPACA_PROVIDER:'alpaca',ALPACA_TRADING_BASE_URL:'https://paper-api.alpaca.markets/',ALPACA_API_KEY:'test-key',ALPACA_API_SECRET:'test-secret',ALPACA_ACCOUNT_ID:'test-account',REAL_EXECUTION_ENABLED:'false'}))vi.stubEnv(name,value);
+		for(const [name,value] of Object.entries({ALPACA_PROVIDER:'alpaca',ALPACA_TRADING_BASE_URL:'https://paper-api.alpaca.markets/',ALPACA_API_KEY:'test-key',ALPACA_SECRET_KEY:'test-secret',REAL_EXECUTION_ENABLED:'false'}))vi.stubEnv(name,value);
 		const provider=createIndividualTradingApiProviderFromEnvironment();
 		expect(provider?.name).toBe('individual-alpaca-trading');
 		expect(provider?.executionMode).toBe('PAPER');
 		vi.stubEnv('ALPACA_TRADING_BASE_URL','http://paper-api.alpaca.markets');
 		expect(createIndividualTradingApiProviderFromEnvironment()).toBeNull();
+		vi.stubEnv('ALPACA_TRADING_BASE_URL','https://api.alpaca.markets');
+		expect(createIndividualTradingApiProviderFromEnvironment()).toBeNull();
+		expect(()=>new IndividualAlpacaTradingProvider({baseUrl:'https://api.alpaca.markets',apiKey:'test-key',apiSecret:'test-secret'})).toThrow('ALPACA_PAPER_ENDPOINT_REQUIRED');
+	});
+
+	it('uses the paper Trading API fields and preserves provider-confirmed order state',async()=>{
+		const fetcher=vi.fn().mockResolvedValue(new Response(JSON.stringify({id:'provider-order-id',client_order_id:'order-key-123456',status:'accepted',created_at:'2026-10-15T12:00:00Z',updated_at:'2026-10-15T12:00:00Z',filled_qty:'0',filled_avg_price:null}),{status:201}));
+		const provider=new IndividualAlpacaTradingProvider({baseUrl:'https://paper-api.alpaca.markets',apiKey:'paper-key',apiSecret:'paper-secret',fetcher});
+		const result=await provider.submitOrder({clientOrderId:'ignored-client-id',accountId:'',symbol:'AAPL',side:'BUY',type:'LIMIT',quantity:'2',limitPrice:'100',timeInForce:'day'},'order-key-123456');
+		expect(result).toMatchObject({providerOrderId:'provider-order-id',clientOrderId:'order-key-123456',state:'ACCEPTED',filledQuantity:'0'});
+		expect(fetcher.mock.calls[0][0]).toBe('https://paper-api.alpaca.markets/v2/orders');
+		expect(fetcher.mock.calls[0][1].headers).toMatchObject({'APCA-API-KEY-ID':'paper-key','APCA-API-SECRET-KEY':'paper-secret'});
+		expect(JSON.parse(fetcher.mock.calls[0][1].body)).toMatchObject({symbol:'AAPL',side:'buy',type:'limit',time_in_force:'day',client_order_id:'order-key-123456',qty:'2',limit_price:'100'});
+	});
+
+	it('reads paper account values and stock positions without an account ID URL',async()=>{
+		const fetcher=vi.fn()
+			.mockResolvedValueOnce(new Response(JSON.stringify({id:'paper-account',status:'ACTIVE',currency:'USD',cash:'1000',buying_power:'2500',equity:'3000',portfolio_value:'3000',pattern_day_trader:false,trade_suspended_by_user:false,trading_blocked:false,account_blocked:false}),{status:200}))
+			.mockResolvedValueOnce(new Response(JSON.stringify([{symbol:'AAPL',qty:'2',avg_entry_price:'150',market_value:'320',unrealized_pl:'20'}]),{status:200}));
+		const provider=new IndividualAlpacaTradingProvider({baseUrl:'https://paper-api.alpaca.markets',apiKey:'paper-key',apiSecret:'paper-secret',fetcher});
+		await expect(provider.getAccount()).resolves.toMatchObject({buying_power:'2500',cash:'1000'});
+		await expect(provider.getPositions('unused')).resolves.toMatchObject([{symbol:'AAPL',quantity:'2',averagePrice:'150',marketValue:'320',unrealizedPnl:'20'}]);
+		expect(fetcher.mock.calls.map(([url])=>url)).toEqual(['https://paper-api.alpaca.markets/v2/account','https://paper-api.alpaca.markets/v2/positions']);
+	});
+
+	it('handles the no-content cancellation response by reading final order state',async()=>{
+		const fetcher=vi.fn()
+			.mockResolvedValueOnce(new Response(null,{status:204}))
+			.mockResolvedValueOnce(new Response(JSON.stringify({id:'provider-order-id',client_order_id:'order-key-123456',status:'canceled',created_at:'2026-10-15T12:00:00Z',updated_at:'2026-10-15T12:01:00Z'}),{status:200}));
+		const provider=new IndividualAlpacaTradingProvider({baseUrl:'https://paper-api.alpaca.markets',apiKey:'paper-key',apiSecret:'paper-secret',fetcher});
+		await expect(provider.cancelOrder('provider-order-id','order-key-123456')).resolves.toMatchObject({state:'CANCELLED'});
+		expect(fetcher.mock.calls.map(([,init])=>init.method)).toEqual(['DELETE',undefined]);
+	});
+
+	it('preserves provider rejection and rate-limit responses without simulating success',async()=>{
+		const rejected=new IndividualAlpacaTradingProvider({baseUrl:'https://paper-api.alpaca.markets',apiKey:'paper-key',apiSecret:'paper-secret',fetcher:vi.fn().mockResolvedValue(new Response('{}',{status:422}))});
+		await expect(rejected.submitOrder({clientOrderId:'client',accountId:'',symbol:'AAPL',side:'BUY',type:'MARKET',quantity:'1'},'reject-key-123456')).rejects.toThrow('ALPACA_TRADING_API_ERROR:422');
+		const limited=new IndividualAlpacaTradingProvider({baseUrl:'https://paper-api.alpaca.markets',apiKey:'paper-key',apiSecret:'paper-secret',fetcher:vi.fn().mockResolvedValue(new Response('{}',{status:429}))});
+		await expect(limited.healthCheck()).resolves.toMatchObject({connected:false,status:'UNAVAILABLE'});
+	});
+
+	it('recovers a duplicate submission by Alpaca client order ID',async()=>{
+		const fetcher=vi.fn()
+			.mockResolvedValueOnce(new Response('{}',{status:422}))
+			.mockResolvedValueOnce(new Response(JSON.stringify({id:'provider-order-id',client_order_id:'retry-key-123456',status:'partially_filled',filled_qty:'0.5',filled_avg_price:'190',created_at:'2026-10-15T12:00:00Z',updated_at:'2026-10-15T12:01:00Z'}),{status:200}));
+		const provider=new IndividualAlpacaTradingProvider({baseUrl:'https://paper-api.alpaca.markets',apiKey:'paper-key',apiSecret:'paper-secret',fetcher});
+		await expect(provider.submitOrder({clientOrderId:'client',accountId:'',symbol:'AAPL',side:'BUY',type:'MARKET',quantity:'1'},'retry-key-123456')).resolves.toMatchObject({state:'PARTIALLY_FILLED',filledQuantity:'0.5',averageFillPrice:'190'});
+		expect(fetcher.mock.calls[1][0]).toBe('https://paper-api.alpaca.markets/v2/orders:by_client_order_id?client_order_id=retry-key-123456');
+	});
+
+	it('normalizes later provider status and cancellation transitions',async()=>{
+		const fetcher=vi.fn()
+			.mockResolvedValueOnce(new Response(JSON.stringify({id:'provider-order-id',client_order_id:'client',status:'filled',filled_qty:'2',filled_avg_price:'190',created_at:'2026-10-15T12:00:00Z',updated_at:'2026-10-15T12:01:00Z'}),{status:200}))
+			.mockResolvedValueOnce(new Response(JSON.stringify({id:'provider-order-id',client_order_id:'client',status:'rejected',created_at:'2026-10-15T12:00:00Z',updated_at:'2026-10-15T12:02:00Z'}),{status:200}));
+		const provider=new IndividualAlpacaTradingProvider({baseUrl:'https://paper-api.alpaca.markets',apiKey:'paper-key',apiSecret:'paper-secret',fetcher});
+		await expect(provider.getOrderStatus('provider-order-id')).resolves.toMatchObject({state:'FILLED',filledQuantity:'2',averageFillPrice:'190'});
+		await expect(provider.getOrderStatus('provider-order-id')).resolves.toMatchObject({state:'REJECTED'});
 	});
 
 	it('accepts only sandbox broker endpoints for non-authorized execution',()=>{

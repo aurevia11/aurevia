@@ -36,6 +36,14 @@ services:
         sync: false
       - key: ADMIN_PASSWORD
         sync: false
+      - key: ALPACA_PROVIDER
+        sync: false
+      - key: ALPACA_TRADING_BASE_URL
+        sync: false
+      - key: ALPACA_API_KEY
+        sync: false
+      - key: ALPACA_SECRET_KEY
+        sync: false
       - key: REGISTRATION_VERIFICATION_ENABLED
         value: "false"
       - key: PHONE_VERIFICATION_REQUIRED

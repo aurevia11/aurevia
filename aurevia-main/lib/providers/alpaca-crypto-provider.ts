@@ -45,12 +45,12 @@ type NormalizedAlpacaOrder = {
 
 function normalizeState(value: string | undefined): ProviderOrderState {
   const status = value?.toLowerCase();
-  if (status === 'accepted' || status === 'pending' || status === 'new') return 'ACCEPTED';
+  if (status === 'accepted' || status === 'pending' || status === 'pending_new' || status === 'new' || status === 'accepted_for_bidding' || status === 'done_for_day' || status === 'pending_cancel' || status === 'pending_replace' || status === 'stopped' || status === 'suspended' || status === 'calculated') return 'ACCEPTED';
   if (status === 'partially_filled') return 'PARTIALLY_FILLED';
   if (status === 'filled') return 'FILLED';
-  if (status === 'rejected' || status === 'invalid' || status === 'canceled' || status === 'cancelled') return 'REJECTED';
-  if (status === 'cancelled') return 'CANCELLED';
-  return 'ACCEPTED';
+  if (status === 'canceled' || status === 'cancelled' || status === 'expired' || status === 'replaced') return 'CANCELLED';
+  if (status === 'rejected' || status === 'invalid') return 'REJECTED';
+  return 'FAILED';
 }
 
 function assertSandbox(baseUrl: string) {
@@ -196,7 +196,7 @@ export class AlpacaCryptoProvider implements ExecutionProvider {
       symbol: request.symbol,
       side: request.side === 'BUY' ? 'buy' : 'sell',
       type: request.type === 'MARKET' ? 'market' : request.type === 'LIMIT' ? 'limit' : 'stop_limit',
-      timeInForce: request.timeInForce ?? 'gtc',
+      timeInForce: request.timeInForce === 'ioc' ? 'ioc' : 'gtc',
       qty: request.quantity,
       limitPrice: request.limitPrice,
       stopPrice: request.stopPrice,
@@ -244,7 +244,6 @@ export class IndividualAlpacaTradingProvider implements ExecutionProvider {
   private readonly baseUrl: string;
   private readonly apiKey: string;
   private readonly apiSecret: string;
-  private readonly accountId: string;
   private readonly fetcher: typeof fetch;
   private readonly webhookSecret: string;
 
@@ -252,24 +251,24 @@ export class IndividualAlpacaTradingProvider implements ExecutionProvider {
     baseUrl: string;
     apiKey: string;
     apiSecret: string;
-    accountId: string;
+    accountId?: string;
     webhookSecret?: string;
     fetcher?: typeof fetch;
   }) {
     const baseUrl = normalizeAlpacaTradingBaseUrl(options.baseUrl);
-    if (!baseUrl) throw new Error('INVALID_ALPACA_TRADING_BASE_URL');
+    if (!baseUrl || new URL(baseUrl).hostname !== 'paper-api.alpaca.markets') throw new Error('ALPACA_PAPER_ENDPOINT_REQUIRED');
     this.baseUrl = baseUrl;
     this.apiKey = options.apiKey;
     this.apiSecret = options.apiSecret;
-    this.accountId = options.accountId;
     this.fetcher = options.fetcher ?? fetch;
     this.webhookSecret = options.webhookSecret ?? '';
-    this.executionMode = new URL(this.baseUrl).hostname === 'api.alpaca.markets' ? 'LIVE' : 'PAPER';
+    this.executionMode = 'PAPER';
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const response = await this.fetcher(`${this.baseUrl}${path}`, {
       ...init,
+      signal: init.signal ?? AbortSignal.timeout(10_000),
       headers: {
         'APCA-API-KEY-ID': this.apiKey,
         'APCA-API-SECRET-KEY': this.apiSecret,
@@ -278,17 +277,27 @@ export class IndividualAlpacaTradingProvider implements ExecutionProvider {
       },
     });
     if (!response.ok) {
-      throw new Error(`ALPACA_TRADING_API_ERROR:${response.status}`);
+      throw new AlpacaTradingApiError(response.status);
     }
+    if (response.status === 204) return undefined as T;
     return response.json() as Promise<T>;
+  }
+
+  async getAccount() {
+    return this.request<{
+      id:string;status:string;currency:string;cash:string;buying_power:string;equity:string;portfolio_value:string;
+      pattern_day_trader:boolean;trade_suspended_by_user:boolean;trading_blocked:boolean;account_blocked:boolean;
+    }>('/v2/account');
   }
 
   async healthCheck() {
     try {
-      await this.request<{ status?: string; account_status?: string }>('/v2/account');
+      const account=await this.getAccount();
+      if(account.status!=='ACTIVE'||account.account_blocked||account.trading_blocked||account.trade_suspended_by_user)return {connected:false,checkedAt:new Date().toISOString(),status:'UNAVAILABLE' as const};
       return { connected: true, checkedAt: new Date().toISOString() };
-    } catch {
-      return { connected: false, checkedAt: new Date().toISOString() };
+    } catch (error) {
+      const status=error instanceof AlpacaTradingApiError&&(error.status===401||error.status===403)?'AUTHENTICATION_FAILED' as const:'UNAVAILABLE' as const;
+      return { connected: false, checkedAt: new Date().toISOString(), status };
     }
   }
 
@@ -297,84 +306,75 @@ export class IndividualAlpacaTradingProvider implements ExecutionProvider {
       symbol: string;
       qty: string;
       side: 'buy' | 'sell';
-      type: 'market' | 'limit' | 'stop';
+      type: 'market' | 'limit' | 'stop' | 'stop_limit';
       time_in_force: 'day' | 'gtc' | 'ioc';
+      client_order_id: string;
       limit_price?: string;
       stop_price?: string;
     } = {
       symbol: request.symbol,
       qty: request.quantity,
       side: request.side === 'BUY' ? 'buy' : 'sell',
-      type: request.type === 'MARKET' ? 'market' : request.type === 'LIMIT' ? 'limit' : 'stop',
+      type: request.type === 'MARKET' ? 'market' : request.type === 'LIMIT' ? 'limit' : request.type === 'STOP_LIMIT' ? 'stop_limit' : 'stop',
       time_in_force: request.timeInForce ?? 'day',
+      client_order_id: idempotencyKey,
     };
     if (request.limitPrice) body.limit_price = request.limitPrice;
     if (request.stopPrice) body.stop_price = request.stopPrice;
-    const response = await this.request<{ id?: string; status?: string; client_order_id?: string; created_at?: string; updated_at?: string }>('/v2/orders', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    });
+    let response:AlpacaTradingOrderResponse;
+    try {
+      response = await this.request<AlpacaTradingOrderResponse>('/v2/orders', {method:'POST',body:JSON.stringify(body)});
+    } catch(error) {
+      if(!(error instanceof AlpacaTradingApiError)||![409,422].includes(error.status))throw error;
+      try{return normalizeIndividualOrder(await this.getOrderByClientId(idempotencyKey),idempotencyKey)}
+      catch{throw error}
+    }
     return normalizeIndividualOrder(response, idempotencyKey);
   }
 
   async cancelOrder(providerOrderId: string, idempotencyKey: string): Promise<ProviderOrder> {
-    const response = await this.request<{ id?: string; status?: string; client_order_id?: string; created_at?: string; updated_at?: string }>(`/v2/orders/${encodeURIComponent(providerOrderId)}`, { method: 'DELETE' });
+    await this.request<void>(`/v2/orders/${encodeURIComponent(providerOrderId)}`, { method: 'DELETE' });
+    const response = await this.getOrder(providerOrderId);
     return normalizeIndividualOrder(response, idempotencyKey);
   }
 
+  async getOrder(providerOrderId: string): Promise<AlpacaTradingOrderResponse> {
+    return this.request<AlpacaTradingOrderResponse>(`/v2/orders/${encodeURIComponent(providerOrderId)}`);
+  }
+
   async getOrderStatus(providerOrderId: string): Promise<ProviderOrder> {
-    const response = await this.request<{ id?: string; status?: string; client_order_id?: string; created_at?: string; updated_at?: string }>(`/v2/orders/${encodeURIComponent(providerOrderId)}`);
-    return normalizeIndividualOrder(response, 'status');
+    return normalizeIndividualOrder(await this.getOrder(providerOrderId), 'status');
+  }
+
+  async getOrderByClientId(clientOrderId:string):Promise<AlpacaTradingOrderResponse>{
+    return this.request<AlpacaTradingOrderResponse>(`/v2/orders:by_client_order_id?client_order_id=${encodeURIComponent(clientOrderId)}`);
+  }
+
+  async getOrders():Promise<ProviderOrder[]>{
+    const response=await this.request<AlpacaTradingOrderResponse[]>('/v2/orders?status=all&limit=500');
+    if(!Array.isArray(response))throw new Error('ALPACA_TRADING_API_INVALID_ORDERS_RESPONSE');
+    return response.map(item=>normalizeIndividualOrder(item,item.client_order_id??''));
   }
 
   async getPositions(_accountId: string): Promise<ProviderPosition[]> {
-    const response = await this.request<{ positions?: unknown[] }>('/v2/positions');
-    const items = Array.isArray(response)
-      ? response
-      : response && typeof response === 'object' && Array.isArray((response as any).positions)
-        ? (response as any).positions
-        : [];
-    return items.map((item: any) => ({
-      symbol: String(item.symbol ?? ''),
-      quantity: String(item.qty ?? item.quantity ?? '0'),
-      averagePrice: String(item.avg_entry_price ?? item.averagePrice ?? '0'),
-      marketValue: String(item.market_value ?? item.marketValue ?? '0'),
-      unrealizedPnl: String(item.unrealized_pl ?? item.unrealizedPnl ?? '0'),
-      currency: String(item.currency ?? 'USD'),
-      asOf: new Date().toISOString(),
-    }));
+    const items=await this.request<Array<{symbol:string;qty:string;avg_entry_price:string;market_value:string;unrealized_pl:string;asset_class?:string}>>('/v2/positions');
+    if(!Array.isArray(items))throw new Error('ALPACA_TRADING_API_INVALID_POSITIONS_RESPONSE');
+    const asOf=new Date().toISOString();
+    return items.map(item=>({symbol:item.symbol,quantity:item.qty,averagePrice:item.avg_entry_price,marketValue:item.market_value,unrealizedPnl:item.unrealized_pl,currency:'USD',asOf}));
   }
 
-  async getBalances(accountId: string): Promise<ProviderBalance[]> {
-    const response = await this.request<{ cash?: string; currency?: string }>(`/v2/accounts/${encodeURIComponent(accountId)}`);
+  async getBalances(_accountId: string): Promise<ProviderBalance[]> {
+    const response = await this.getAccount();
     return [{
-      currency: String(response.currency ?? 'USD'),
-      available: String(response.cash ?? '0'),
-      reserved: '0',
+      currency:response.currency,
+      available:response.cash,
+      reserved:'0',
       asOf: new Date().toISOString(),
     }];
   }
 
-  async reconcile(accountId: string): Promise<ProviderReconciliation> {
-    const positions = await this.getPositions(accountId);
-    const orderStatus = await this.getOrderStatus(this.accountId).catch(() => ({
-      providerOrderId: this.accountId,
-      clientOrderId: 'reconcile',
-      state: 'FAILED',
-      acceptedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      executions: [],
-    } as ProviderOrder));
-
-    return {
-      startedAt: new Date().toISOString(),
-      completedAt: new Date().toISOString(),
-      matchedOrders: orderStatus?.providerOrderId ? 1 : 0,
-      mismatchedOrders: 0,
-      matchedPositions: positions.length,
-      mismatchedPositions: 0,
-      differences: [],
-    };
+  async reconcile(_accountId: string): Promise<ProviderReconciliation> {
+    throw new Error('PROVIDER_RECONCILIATION_REQUIRES_LOCAL_CONTEXT');
   }
 
   verifyWebhook(rawBody: string, signature: string): Promise<boolean> {
@@ -391,28 +391,39 @@ export class IndividualAlpacaTradingProvider implements ExecutionProvider {
   }
 }
 
+export class AlpacaTradingApiError extends Error {
+  constructor(readonly status:number){super(`ALPACA_TRADING_API_ERROR:${status}`);this.name='AlpacaTradingApiError';}
+}
+
+type AlpacaTradingOrderResponse={
+  id?:string;status?:string;client_order_id?:string;created_at?:string;updated_at?:string;
+  filled_qty?:string;filled_avg_price?:string;
+};
+
 function normalizeIndividualOrder(
-  response: Partial<{ id: string; status: string; client_order_id: string; created_at: string; updated_at: string }>,
+  response: AlpacaTradingOrderResponse,
   idempotencyKey: string,
 ): ProviderOrder {
+  if(!response.id||!response.status)throw new Error('ALPACA_TRADING_API_INVALID_ORDER_RESPONSE');
   return {
-    providerOrderId: response.id ?? idempotencyKey,
+    providerOrderId: response.id,
     clientOrderId: response.client_order_id || idempotencyKey,
     state: normalizeState(response.status),
     acceptedAt: response.created_at || new Date().toISOString(),
     updatedAt: response.updated_at || new Date().toISOString(),
     executions: [],
+    ...(response.filled_qty===undefined?{}:{filledQuantity:response.filled_qty}),
+    ...(response.filled_avg_price===undefined?{}:{averageFillPrice:response.filled_avg_price}),
   };
 }
 
 export function createIndividualTradingApiProviderFromEnvironment() {
   const config = getServerConfiguration().execution;
-  if (config.alpacaProvider.toLowerCase() !== 'alpaca' || !config.alpacaTradingConfigured) return null;
+  if (config.alpacaProvider.toLowerCase() !== 'alpaca' || !config.alpacaTradingConfigured || new URL(config.alpacaTradingBaseUrl).hostname !== 'paper-api.alpaca.markets') return null;
   return new IndividualAlpacaTradingProvider({
     baseUrl: config.alpacaTradingBaseUrl,
     apiKey: config.alpacaTradingApiKey,
     apiSecret: config.alpacaTradingApiSecret,
-    accountId: config.alpacaTradingAccountId,
     webhookSecret: config.brokerWebhookSecret,
   });
 }

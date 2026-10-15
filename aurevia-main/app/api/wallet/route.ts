@@ -11,12 +11,13 @@ import {sendSupportEmail} from '@/lib/email';
 import {validateWithdrawal} from '@/lib/production-policy';
 import {FundingEvidenceError,maxFundingEvidenceBytes,validateFundingEvidence} from '@/lib/funding-evidence';
 import {createPrivateObjectKey,deletePrivateObject,PrivateStorageError,uploadPrivateObject} from '@/lib/private-storage';
+import {SUPPORTED_CURRENCIES} from '@/lib/config/simulation';
 
 const schema=z.object({
 	type:z.nativeEnum(FundingType),
 	paymentMethodId:z.string().min(1).optional(),
 	amount:z.number().positive().max(100000000),
-	currency:z.string().trim().regex(/^[A-Za-z]{3,10}$/),
+	currency:z.enum(SUPPORTED_CURRENCIES),
 	transactionReference:z.string().trim().max(180).optional(),
 	referenceInfo:z.string().trim().max(500).optional(),
 	senderInfo:z.string().trim().max(300).optional(),
@@ -49,9 +50,12 @@ export async function GET(){
 			return entry?[{id:transaction.id,reference:transaction.reference,description:transaction.description,type:entry.type,amount:entry.amount,currency:entry.account.currency,createdAt:transaction.createdAt}]:[];
 		});
 		const usdBalance=balances.find(item=>item.currency==='USD')?.balance??null;
-		const approvals=transactions.length?await db.auditLog.findMany({where:{entity:'FUNDING',entityId:{in:transactions.map(transaction=>transaction.id)},action:'FUNDING_APPROVED'},select:{entityId:true,createdAt:true,actor:{select:{name:true,email:true}}},orderBy:{createdAt:'desc'}}):[];
+		const approvals=transactions.length?await db.auditLog.findMany({where:{entity:'FUNDING',entityId:{in:transactions.map(transaction=>transaction.id)},action:'FUNDING_APPROVED'},select:{entityId:true,createdAt:true,metadata:true,actor:{select:{name:true,email:true}}},orderBy:{createdAt:'desc'}}):[];
 		const approvalByRequest=new Map();
-		for(const approval of approvals)if(approval.entityId&&!approvalByRequest.has(approval.entityId))approvalByRequest.set(approval.entityId,{reviewedAt:approval.createdAt,reviewedBy:approval.actor});
+		for(const approval of approvals)if(approval.entityId&&!approvalByRequest.has(approval.entityId)){
+			const metadata=approval.metadata&&typeof approval.metadata==='object'&&!Array.isArray(approval.metadata)?approval.metadata as Record<string,unknown>:{};
+			approvalByRequest.set(approval.entityId,{reviewedAt:approval.createdAt,reviewedBy:approval.actor,previousBalance:typeof metadata.previousBalance==='string'?metadata.previousBalance:null,resultingBalance:typeof metadata.resultingBalance==='string'?metadata.resultingBalance:null});
+		}
 		const safeTransactions=transactions.map(({receiptKey,...transaction})=>({...transaction,hasReceipt:!!receiptKey,...(approvalByRequest.get(transaction.id)||{})}));
 		return NextResponse.json(jsonSafe({accountMode:user.accountMode,balance:usdBalance,balances,transactions:safeTransactions,adminLedgerReceipts}),{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){
@@ -85,19 +89,12 @@ export async function POST(req:Request){
 		const parsed=schema.parse(body);
 		const idempotencyKey=req.headers.get('Idempotency-Key');
 		if(!idempotencyKey||idempotencyKey.length>128)return NextResponse.json({error:'A valid idempotency key is required.'},{status:400});
-		if(user.accountMode===AccountMode.DEMO){
-			const controls=await db.user.findUniqueOrThrow({where:{id:user.id},select:{depositEnabled:true,withdrawalEnabled:true,accountRestricted:true}});
-			if(parsed.type===FundingType.DEPOSIT&&!controls.depositEnabled)throw new Error('DEPOSITS_DISABLED');
-			if(parsed.type===FundingType.WITHDRAWAL&&!controls.withdrawalEnabled)throw new Error('WITHDRAWAL_DISABLED');
-			if(parsed.type===FundingType.WITHDRAWAL&&controls.accountRestricted)throw new Error('ACCOUNT_RESTRICTED');
-			return NextResponse.json({error:'DEMO deposits and withdrawals are unavailable.'},{status:409});
-		}
 		if(parsed.type===FundingType.DEPOSIT){
 			const access=await db.user.findUniqueOrThrow({where:{id:user.id},select:{depositEnabled:true}});
 			if(!access.depositEnabled)throw new Error('DEPOSITS_DISABLED');
 		}
-		if(parsed.type===FundingType.DEPOSIT&&parsed.paymentMethodId){
-			if(!evidenceFile)return NextResponse.json({error:'Attach a payment screenshot before submitting a deposit request.'},{status:400});
+		if(parsed.paymentMethodId)return NextResponse.json({error:'External payment methods are disabled. Submit an internal simulated request without a payment method.'},{status:400});
+		if(parsed.type===FundingType.DEPOSIT&&evidenceFile){
 			if(evidenceFile.size===0)throw new FundingEvidenceError('Choose a non-empty evidence file.',400);
 			if(evidenceFile.size>maxFundingEvidenceBytes)throw new FundingEvidenceError('Evidence must be 5 MB or smaller.',413);
 			const bytes=Buffer.from(await evidenceFile.arrayBuffer());
@@ -116,7 +113,7 @@ export async function POST(req:Request){
 		const result=await db.$transaction(async tx=>{
 			const duplicate=await tx.fundingRequest.findUnique({where:{idempotencyKey}});
 			if(duplicate){
-				if(duplicate.userId!==user.id||duplicate.accountMode!==user.accountMode||duplicate.type!==parsed.type||!duplicate.amount.equals(parsed.amount)||duplicate.currency!==currency||duplicate.paymentMethodId!==(parsed.paymentMethodId||null))throw new Error('IDEMPOTENCY_KEY_REUSED');
+				if(duplicate.userId!==user.id||duplicate.accountMode!==user.accountMode||duplicate.type!==parsed.type||!duplicate.amount.equals(parsed.amount)||duplicate.currency!==currency||duplicate.paymentMethodId!==null)throw new Error('IDEMPOTENCY_KEY_REUSED');
 				return {request:duplicate,replay:true};
 			}
 			const fundingUser=await tx.user.findUniqueOrThrow({where:{id:user.id},select:{kycStatus:true,depositEnabled:true,withdrawalEnabled:true,accountRestricted:true}});
@@ -124,21 +121,10 @@ export async function POST(req:Request){
 			if(parsed.type==='WITHDRAWAL'&&!fundingUser.withdrawalEnabled)throw new Error('WITHDRAWAL_DISABLED');
 			if(parsed.type==='WITHDRAWAL'&&fundingUser.accountRestricted)throw new Error('ACCOUNT_RESTRICTED');
 			if(user.accountMode==='REAL'&&parsed.type==='DEPOSIT'&&parsed.paymentMethodId&&fundingUser.kycStatus!=='APPROVED')throw new Error('REAL_KYC_REQUIRED');
-			const method=parsed.paymentMethodId?await tx.paymentMethod.findUnique({where:{id:parsed.paymentMethodId}}):null;
-			const manualRealRequest=user.accountMode==='REAL'&&!parsed.paymentMethodId;
-			const methodEnabled=!!method?.enabled&&(parsed.type==='DEPOSIT'?method.depositEnabled:method.withdrawalEnabled);
-			const correctMode=method?.demoOnly===(user.accountMode==='DEMO');
-			if(!manualRealRequest&&(!method||!methodEnabled||!method.currencies.includes(currency)||!correctMode))throw new Error('PAYMENT_METHOD_UNAVAILABLE');
 			const amount=new Prisma.Decimal(parsed.amount);
-			if(parsed.type==='WITHDRAWAL'&&method&&(amount.lt(method.minimumAmount)||(method.maximumAmount&&amount.gt(method.maximumAmount))))throw new Error('AMOUNT_OUT_OF_RANGE');
-			if(parsed.type==='DEPOSIT'&&method&&!method.demoOnly&&!method.destination&&!method.instructions)throw new Error('PAYMENT_INSTRUCTIONS_UNAVAILABLE');
 			if(parsed.type==='WITHDRAWAL'){
-				if(!method&&user.accountMode!==AccountMode.REAL)throw new Error('PAYMENT_METHOD_UNAVAILABLE');
-				if(method&&!method.demoOnly&&!parsed.destinationInfo)throw new Error('WITHDRAWAL_DESTINATION_REQUIRED');
-				if(method&&!method.demoOnly&&method.requiresNetwork&&!parsed.network)throw new Error('WITHDRAWAL_NETWORK_REQUIRED');
-				const code=`USER:${user.id}:${user.accountMode}:${currency}`;
-				const account=await tx.ledgerAccount.findUnique({where:{code}});
-				const currentBalance=account?await balance(tx,account.id):new Prisma.Decimal(0);
+				const account=await ensureUserLedger(tx,user.id,user.accountMode,currency);
+				const currentBalance=await balance(tx,account.id);
 				const pending=await tx.fundingRequest.aggregate({where:{userId:user.id,accountMode:user.accountMode,currency,type:FundingType.WITHDRAWAL,status:{in:reservingStatuses}},_sum:{amount:true}});
 				const reserved=pending._sum.amount??new Prisma.Decimal(0);
 				if(user.accountMode==='REAL')validateWithdrawal({balance:currentBalance.toString(),pending:reserved.toString(),amount:amount.toString(),withdrawalEnabled:fundingUser.withdrawalEnabled,accountRestricted:fundingUser.accountRestricted,kycStatus:fundingUser.kycStatus,simulated:true});
@@ -147,19 +133,19 @@ export async function POST(req:Request){
 			const request=await tx.fundingRequest.create({data:{
 				userId:user.id,
 				type:parsed.type,
-				method:method?.name||(user.accountMode===AccountMode.REAL?`Simulated REAL ${parsed.type.toLowerCase()}`:'Manual admin review'),
+				method:`Internal simulated ${parsed.type.toLowerCase()}`,
 				amount,
 				currency,
 				status:FundingStatus.PENDING_REVIEW,
 				accountMode:user.accountMode,
-				paymentMethodId:method?.id||null,
+				paymentMethodId:null,
 				idempotencyKey,
 				transactionReference:parsed.transactionReference||null,
 				referenceInfo:parsed.referenceInfo||null,
 				senderInfo:parsed.senderInfo||null,
-				destinationInfo:method?.demoOnly?null:method?parsed.type==='DEPOSIT'?method.destination:parsed.destinationInfo:parsed.destinationInfo||null,
-				beneficiaryInfo:parsed.beneficiaryInfo||null,
-				network:parsed.network||null,
+				destinationInfo:null,
+				beneficiaryInfo:null,
+				network:null,
 				note:parsed.note||null,
 				receiptKey:receiptKey||null,
 			}});

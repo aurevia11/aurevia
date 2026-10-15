@@ -8,7 +8,7 @@ export type ProviderOrderRequest={
 	side:'BUY'|'SELL';
 	type:'MARKET'|'LIMIT'|'STOP'|'STOP_LIMIT';
 	quantity:string;
-	timeInForce?:'gtc'|'ioc';
+	timeInForce?:'day'|'gtc'|'ioc';
 	limitPrice?:string;
 	stopPrice?:string;
 };
@@ -29,6 +29,8 @@ export type ProviderOrder={
 	acceptedAt:string;
 	updatedAt:string;
 	executions:ProviderExecution[];
+	filledQuantity?:string;
+	averageFillPrice?:string;
 };
 
 export type ProviderPosition={
@@ -68,7 +70,7 @@ export type SignedProviderWebhook={
 export interface ExecutionProvider{
 	readonly name:string;
 	readonly executionMode:'PAPER'|'LIVE';
-	healthCheck():Promise<{connected:boolean;checkedAt:string}>;
+	healthCheck():Promise<{connected:boolean;checkedAt:string;status?:'AUTHENTICATION_FAILED'|'UNAVAILABLE'}>;
 	submitOrder(request:ProviderOrderRequest,idempotencyKey:string):Promise<ProviderOrder>;
 	cancelOrder(providerOrderId:string,idempotencyKey:string):Promise<ProviderOrder>;
 	getOrderStatus(providerOrderId:string):Promise<ProviderOrder>;

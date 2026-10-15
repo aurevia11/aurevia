@@ -2,9 +2,9 @@ import {NextResponse} from 'next/server';
 import {z,ZodError} from 'zod';
 import {requireUser} from '@/lib/auth';
 import {db} from '@/lib/db';
+import {SUPPORTED_CURRENCIES} from '@/lib/config/simulation';
 
-const currencies=['USD','EUR','GBP','NGN','CAD','AUD','CHF','JPY'] as const;
-const schema=z.object({currency:z.enum(currencies)});
+const schema=z.object({currency:z.enum(SUPPORTED_CURRENCIES)});
 
 export async function GET(){
 	try{

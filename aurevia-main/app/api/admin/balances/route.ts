@@ -4,12 +4,13 @@ import {z,ZodError} from 'zod';
 import {requireAdmin} from '@/lib/auth';
 import {db} from '@/lib/db';
 import {createNotification} from '@/lib/notifications';
-import {balance,ensureSystemAccount,ensureUserLedger} from '@/lib/ledger';
+import {balance,ensureSystemAccount,ensureUserLedger,reservedWithdrawalAmount} from '@/lib/ledger';
+import {SUPPORTED_CURRENCIES} from '@/lib/config/simulation';
 
 const schema=z.object({
 	userId:z.string().min(1),
 	accountMode:z.nativeEnum(AccountMode),
-	currency:z.enum(['USD','EUR','GBP','NGN','CAD','AUD','CHF','JPY']),
+	currency:z.enum(SUPPORTED_CURRENCIES),
 	amount:z.string().regex(/^(?:0|[1-9]\d{0,7})(?:\.\d{1,2})?$/),
 	direction:z.enum(['CREDIT','DEBIT']),
 	category:z.enum(['ADMIN_ALLOCATION','CORRECTION','PROMOTIONAL','REVERSAL']),
@@ -23,7 +24,6 @@ export async function POST(request:Request){
 		const input=schema.parse(await request.json());
 		const amount=new Prisma.Decimal(input.amount);
 		if(amount.lte(0))return NextResponse.json({error:'Amount must be greater than zero.'},{status:400});
-		if(input.accountMode===AccountMode.REAL&&input.direction==='DEBIT')return NextResponse.json({error:'REAL account debits require a separately authorized settlement workflow.'},{status:409});
 		const reference=`ADMIN:${input.accountMode}:${input.userId}:${input.idempotencyKey}`;
 		const description=`Administrative ${input.direction.toLowerCase()} · ${input.category} · ${input.reason}`;
 		const result=await db.$transaction(async tx=>{
@@ -37,7 +37,8 @@ export async function POST(request:Request){
 			if(customer.status!==UserStatus.ACTIVE)throw new Error('ACCOUNT_NOT_ACTIVE');
 			const account=await ensureUserLedger(tx,customer.id,input.accountMode,input.currency);
 			const availableBefore=await balance(tx,account.id);
-			if(input.direction==='DEBIT'&&availableBefore.lt(amount))throw new Error('INSUFFICIENT_BALANCE');
+			const reserved=input.direction==='DEBIT'?await reservedWithdrawalAmount(tx,customer.id,input.accountMode,input.currency):new Prisma.Decimal(0);
+			if(input.direction==='DEBIT'&&availableBefore.lt(amount.plus(reserved)))throw new Error('INSUFFICIENT_BALANCE');
 			const offset=await ensureSystemAccount(tx,`SYSTEM:ADMIN:${input.accountMode}:${input.currency}`,`Administrator ${input.accountMode} adjustment clearing`,input.currency,input.accountMode);
 			const debitAccount=input.direction==='CREDIT'?offset:account;
 			const creditAccount=input.direction==='CREDIT'?account:offset;

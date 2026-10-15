@@ -10,9 +10,11 @@ export async function GET(request:Request){
   const requested=(parameters.get('symbols')||'DJI,SPX,NASDAQ,SP100,NDX,DAX,IBEX,NIKKEI,BTC,EURGBP').split(',').map(value=>value.trim().toUpperCase()).filter(Boolean).slice(0,20);
   const assets=requested.map(getMarketAsset).filter((asset):asset is NonNullable<typeof asset>=>!!asset);
   if(!assets.length)return NextResponse.json({quotes:[],source:'Yahoo Finance'},{headers:{'Cache-Control':'public, s-maxage=5, stale-while-revalidate=10'}});
-  const apiKey=getServerConfiguration().marketData.finnhubApiKey;
+  const config=getServerConfiguration();
+  const apiKey=config.marketData.finnhubApiKey;
+  const alpacaData=config.execution.alpacaProvider.toLowerCase()==='alpaca'?{apiKey:config.execution.alpacaTradingApiKey,apiSecret:config.execution.alpacaTradingApiSecret}:undefined;
   const quotes=await Promise.all(assets.map(async asset=>{
-    try{return await getMarketQuote(asset,apiKey)}
+    try{return await getMarketQuote(asset,apiKey,alpacaData)}
     catch(error){return {asset,error:error instanceof MarketDataError?error.message:'Live quote unavailable.'}}
   }));
   const sources=[...new Set(quotes.flatMap(quote=>'source'in quote?[quote.source]:[]))];

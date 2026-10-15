@@ -22,24 +22,26 @@ export async function getExecutionProviderStatus(){
 		ALPACA_PROVIDER:config.alpacaProvider.toLowerCase()==='alpaca',
 		ALPACA_TRADING_BASE_URL:config.alpacaTradingUrlConfigured,
 		ALPACA_API_KEY:Boolean(config.alpacaTradingApiKey),
-		ALPACA_API_SECRET:Boolean(config.alpacaTradingApiSecret),
-		ALPACA_ACCOUNT_ID:Boolean(config.alpacaTradingAccountId),
+		ALPACA_SECRET_KEY:Boolean(config.alpacaTradingApiSecret),
 	};
 	const missingConfiguration=Object.entries(configuredVariables).filter(([name,configured])=>name!=='REAL_EXECUTION_ENABLED'&&!configured).map(([name])=>name);
 	const selected=config.alpacaProvider.toLowerCase()==='alpaca';
-	let alpacaStatus:'NOT_CONFIGURED'|'AVAILABLE'|'ERROR'|'DISABLED'='NOT_CONFIGURED';
-	if(selected&&config.alpacaTradingUrlConfigured&&!config.alpacaTradingUrlValid)alpacaStatus='ERROR';
+	let alpacaStatus:'MISSING_CONFIGURATION'|'AUTHENTICATION_FAILED'|'UNAVAILABLE'|'HEALTHY_PAPER'='MISSING_CONFIGURATION';
+	if(selected&&config.alpacaTradingUrlConfigured&&!config.alpacaTradingUrlValid)alpacaStatus='UNAVAILABLE';
+	else if(selected&&config.alpacaTradingUrlValid&&new URL(config.alpacaTradingBaseUrl).hostname!=='paper-api.alpaca.markets')alpacaStatus='UNAVAILABLE';
 	else if(selected&&missingConfiguration.length===0&&statusProvider){
-		if(statusProvider.executionMode==='LIVE'&&!config.realEnabled)alpacaStatus='DISABLED';
-		else try{alpacaStatus=(await statusProvider.healthCheck()).connected?'AVAILABLE':'ERROR'}catch{alpacaStatus='ERROR'}
+		try{
+			const health=await statusProvider.healthCheck();
+			alpacaStatus=health.connected&&statusProvider.executionMode==='PAPER'?'HEALTHY_PAPER':health.connected?'UNAVAILABLE':health.status??'UNAVAILABLE';
+		}catch{alpacaStatus='UNAVAILABLE'}
 	}
-	const state:ProviderConnectionState=!config.realEnabled?'DISABLED':!selected||missingConfiguration.length?'NOT_CONFIGURED':alpacaStatus==='ERROR'?'ERROR':executionProvider&&alpacaStatus==='AVAILABLE'?'CONNECTED':'DISABLED';
+	const state:ProviderConnectionState=!config.realEnabled?'DISABLED':!selected||missingConfiguration.length?'NOT_CONFIGURED':alpacaStatus==='UNAVAILABLE'||alpacaStatus==='AUTHENTICATION_FAILED'?'ERROR':executionProvider?'CONNECTED':'DISABLED';
 	return {
 		state,
 		enabled:config.realEnabled&&state==='CONNECTED'&&providerMode==='LIVE'&&executionProvider===statusProvider,
 		providerName:config.provider,
 		providerMode,
-		alpacaTrading:{status:alpacaStatus,configured:selected&&config.alpacaTradingConfigured,mode:providerMode,realExecutionEnabled:config.realEnabled},
+		alpacaTrading:{status:alpacaStatus,executionStatus:'DISABLED' as const,configured:selected&&config.alpacaTradingConfigured,mode:providerMode,realExecutionEnabled:false},
 		adapterRegistered:!!executionProvider,
 		configuredVariables,
 		missingConfiguration,

@@ -5,7 +5,7 @@ import {AlpacaCryptoProvider,IndividualAlpacaTradingProvider} from '../lib/provi
 
 afterEach(()=>vi.unstubAllEnvs());
 
-describe('REAL execution provider readiness',()=>{
+describe('Alpaca paper provider readiness',()=>{
 	it('remains disabled when the safety gate is not explicitly enabled',async()=>{
 		vi.stubEnv('REAL_EXECUTION_ENABLED','false');
 		const status=await getExecutionProviderStatus();
@@ -16,11 +16,11 @@ describe('REAL execution provider readiness',()=>{
 	it('fails closed when the gate is enabled but provider configuration is incomplete',async()=>{
 		vi.stubEnv('REAL_EXECUTION_ENABLED','true');
 		vi.stubEnv('ALPACA_PROVIDER','alpaca');
-		for(const name of ['ALPACA_TRADING_BASE_URL','ALPACA_API_KEY','ALPACA_API_SECRET','ALPACA_ACCOUNT_ID'])vi.stubEnv(name,'');
+		for(const name of ['ALPACA_TRADING_BASE_URL','ALPACA_API_KEY','ALPACA_SECRET_KEY'])vi.stubEnv(name,'');
 		const status=await getExecutionProviderStatus();
 		expect(status.state).toBe('NOT_CONFIGURED');
 		expect(status.missingConfiguration).toEqual(expect.arrayContaining([
-			'ALPACA_TRADING_BASE_URL','ALPACA_API_KEY','ALPACA_API_SECRET','ALPACA_ACCOUNT_ID',
+			'ALPACA_TRADING_BASE_URL','ALPACA_API_KEY','ALPACA_SECRET_KEY',
 		]));
 		await expect(getExecutionProviderOrThrow()).rejects.toThrow('REAL_EXECUTION_UNAVAILABLE');
 	});
@@ -40,24 +40,24 @@ describe('REAL execution provider readiness',()=>{
 			ALPACA_PROVIDER:'alpaca',
 			ALPACA_TRADING_BASE_URL:'https://paper-api.alpaca.markets',
 			ALPACA_API_KEY:'test-key',
-			ALPACA_API_SECRET:'test-secret',
-			ALPACA_ACCOUNT_ID:'test-account',
+			ALPACA_SECRET_KEY:'test-secret',
 		}))vi.stubEnv(name,value);
 		let authenticated=false;
-		const fetcher=vi.fn().mockImplementation(()=>authenticated?{ok:true,status:200,json:async()=>({id:'paper-account'})}:{ok:false,status:401});
+		const fetcher=vi.fn().mockImplementation(()=>authenticated?{ok:true,status:200,json:async()=>({id:'paper-account',status:'ACTIVE',account_blocked:false,trading_blocked:false,trade_suspended_by_user:false})}:{ok:false,status:401});
 		registerExecutionProvider(new IndividualAlpacaTradingProvider({
-			baseUrl:'https://paper-api.alpaca.markets',apiKey:'test-key',apiSecret:'test-secret',accountId:'test-account',fetcher,
+			baseUrl:'https://paper-api.alpaca.markets',apiKey:'test-key',apiSecret:'test-secret',fetcher,
 		}),{executionEnabled:false});
 
 		const failedStatus=await getExecutionProviderStatus();
-		expect(failedStatus.alpacaTrading.status).toBe('ERROR');
+		expect(failedStatus.alpacaTrading.status).toBe('AUTHENTICATION_FAILED');
 		expect(failedStatus.enabled).toBe(false);
 		authenticated=true;
 		const status=await getExecutionProviderStatus();
 		expect(status.providerMode).toBe('PAPER');
 		expect(status.state).toBe('DISABLED');
 		expect(status.enabled).toBe(false);
-		expect(status.alpacaTrading.status).toBe('AVAILABLE');
+		expect(status.alpacaTrading.status).toBe('HEALTHY_PAPER');
+		expect(status.alpacaTrading.executionStatus).toBe('DISABLED');
 		expect(fetcher).toHaveBeenCalledTimes(2);
 		expect(fetcher.mock.calls[0][0]).toBe('https://paper-api.alpaca.markets/v2/account');
 		expect(fetcher.mock.calls[0][1].method).toBeUndefined();

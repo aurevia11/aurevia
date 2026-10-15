@@ -9,7 +9,6 @@ import {getAccountTier} from '@/lib/production-policy';
 import {getMarketQuote,MARKET_ASSETS} from '@/lib/live-market';
 import {getServerConfiguration} from '@/lib/config/env';
 import {getSupportContact} from '@/lib/config';
-import {getFundingProviderReadiness} from '@/lib/providers/funding-provider';
 import {calculateTradePlan,formatTradePlan,hasDemoOrderIntent,missingTradePlanInputs,parseDemoOrderIntent,parseTradePlan,requestsUnsupportedOrderType} from '@/lib/nova-assistant';
 import {rateLimit} from '@/lib/rate-limit';
 import {isIP} from 'node:net';
@@ -99,7 +98,9 @@ export async function POST(request:Request){
 		let quoteAudit:Record<string,string|boolean>|undefined;
 		if(asset&&/\b(price|quote|market|movement|trading at|value|ticker)\b/i.test(input.question)){
 			try{
-				const quote=await getMarketQuote(asset,getServerConfiguration().marketData.finnhubApiKey);
+				const config=getServerConfiguration();
+				const alpacaData=config.execution.alpacaProvider.toLowerCase()==='alpaca'?{apiKey:config.execution.alpacaTradingApiKey,apiSecret:config.execution.alpacaTradingApiSecret}:undefined;
+				const quote=await getMarketQuote(asset,config.marketData.finnhubApiKey,alpacaData);
 				const ageMinutes=Math.max(0,Math.round((Date.now()-Date.parse(quote.updatedAt))/60_000));
 				const freshness=quote.isStale||ageMinutes>5?'STALE PROVIDER DATA':'PROVIDER DATA · freshness not independently verified';
 				quoteAnswer=`${asset.name} (${asset.id}): ${quote.price} ${asset.currency}; daily change ${quote.change} (${quote.changePercent}%). Source: ${quote.source}. Timestamp: ${quote.updatedAt}. Status: ${freshness}. This is market information, not a trade recommendation.`;
@@ -175,16 +176,8 @@ export async function POST(request:Request){
 					eventTypes.push('NOTIFICATION_SUMMARY_LOOKUP');
 				}
 				if(/\b(deposits?|withdrawals?|payments?|payouts?)\b/.test(requested)){
-					const paymentWhere=/\b(withdrawals?|payouts?)\b/.test(requested)?{withdrawalEnabled:true}:{depositEnabled:true};
-					const funding=user.accountMode==='REAL'?await getFundingProviderReadiness():null;
-					const methods=user.accountMode==='DEMO'||funding?.workflowEnabled?await db.paymentMethod.findMany({where:{...paymentWhere,enabled:true,demoOnly:user.accountMode==='DEMO'},select:{name:true,currencies:true,destination:true,instructions:true,requiresNetwork:true},orderBy:{displayOrder:'asc'},take:10}):[];
-					if(user.accountMode==='DEMO'){
-						answers.push(methods.length?`Available DEMO request methods: ${methods.map(method=>`${method.name} (${method.currencies.join(', ')})`).join('; ')}. These are simulated request options only; do not send real funds.`:'No DEMO payment request method is currently configured. No balance was changed.');
-					}else if(funding?.workflowEnabled&&methods.length){
-						answers.push(`Server-configured official Aurevia deposit information: ${methods.map(method=>`${method.name} (${method.currencies.join(', ')})${method.requiresNetwork?' · network required':''}${method.destination?` · destination: ${method.destination}`:''}${method.instructions?` · instructions: ${method.instructions}`:''}`).join('; ')}. Verify these details with Aurevia support before sending funds. A request, reference, or screenshot is not settlement confirmation and does not create a balance.`);
-					}else{
-						answers.push('REAL deposits and withdrawals are unavailable because a verified provider and end-to-end settlement workflow are not enabled. No REAL payment instructions are available. Do not send funds; a request or screenshot cannot confirm settlement or create a balance.');
-					}
+					await db.fundingRequest.count({where:{userId:user.id,accountMode:user.accountMode}});
+					answers.push(`Your ${user.accountMode} account supports internal simulated deposit and withdrawal requests in Wallet. An authorized Aurevia administrator reviews requests and any ledger changes; no payment provider, bank, broker, or crypto network is contacted. A request or evidence attachment is not proof of a real payment.`);
 					eventTypes.push('PAYMENT_INSTRUCTIONS_LOOKUP');
 				}
 				accountAnswer=answers.join(' ');
@@ -195,7 +188,7 @@ export async function POST(request:Request){
 		if(userId&&quoteAudit)await db.auditLog.create({data:{actorId:userId,action:'NOVA_MARKET_DATA_LOOKUP',entity:'NOVA_ACTIVITY',entityId:input.conversationId||null,metadata:quoteAudit}});
 		const contact=getSupportContact();
 		const fixed=education.find(([pattern])=>pattern.test(input.question))?.[1];
-		const answer=orderAnswer||tradePlanAnswer||quoteAnswer||accountAnswer||fixed||(/\b(support|contact|email)\b/i.test(input.question)?`Official Aurevia support email: ${contact.email}. You can also create a private support ticket from this page.`:/\b(deposit|payment|bitcoin|bank)\b/i.test(input.question)?'Open Wallet and select an enabled payment method to see its currently configured instructions. A submitted receipt is evidence only; it is not confirmation of settlement and does not create a balance.':/\b(real|demo|trade|order)\b/i.test(input.question)?'DEMO activity uses the simulated account. REAL orders require the existing server-side authorization and a verified, enabled execution provider. Nova cannot submit REAL orders; review and confirm any permitted order in Trade.':'I can explain platform workflows, common investing terms, and supported market quotes. For account-specific questions, sign in; for market data, include a symbol. I do not execute trades or confirm payments.');
+		const answer=orderAnswer||tradePlanAnswer||quoteAnswer||accountAnswer||fixed||(/\b(support|contact|email)\b/i.test(input.question)?`Official Aurevia support email: ${contact.email}. You can also create a private support ticket from this page.`:/\b(deposit|payment|bitcoin|bank)\b/i.test(input.question)?'Open Wallet to submit an internal simulated deposit or withdrawal request for administrator review. No external payment destination or transfer is provided.':/\b(real|demo|trade|order)\b/i.test(input.question)?'DEMO and REAL-interface orders use separate internal simulated ledgers and simulated execution. Market data availability is separate; no broker orders are submitted. Nova cannot submit orders.':'I can explain platform workflows, common investing terms, and supported market quotes. For account-specific questions, sign in; for market data, include a symbol. I do not execute trades or confirm payments.');
 		return NextResponse.json({answer,...(orderDraft?{orderDraft}:{}),activity:auditAction||quoteAudit||orderDraft?'recorded-without-conversation-content':'none'},{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){
 		if(error instanceof ZodError)return NextResponse.json({error:'Ask a question of at most 800 characters.'},{status:400});

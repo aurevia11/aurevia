@@ -1,4 +1,5 @@
 import {getFinnhubHistory,getFinnhubQuote} from './providers/finnhub-market-data';
+import {AlpacaStockMarketDataProvider,type AlpacaStockDataOptions} from './providers/alpaca-stock-market-data';
 
 export type MarketAssetType = 'INDEX' | 'STOCK' | 'FOREX' | 'CRYPTO';
 
@@ -155,9 +156,21 @@ function quoteFromResult(asset:LiveMarketAsset,result:YahooChartResult):MarketQu
   };
 }
 
-export async function getMarketQuote(asset:LiveMarketAsset,apiKey=''):Promise<MarketQuote>{
+function alpacaProvider(options?:AlpacaStockDataOptions){return options?.apiKey&&options.apiSecret?new AlpacaStockMarketDataProvider(options):null}
+
+function quoteFromAlpaca(asset:LiveMarketAsset,snapshot:Awaited<ReturnType<AlpacaStockMarketDataProvider['getQuote']>>):MarketQuote{
+  if(snapshot.previousClose===null||snapshot.previousClose<=0)throw new MarketDataError(`Daily change data is unavailable for ${asset.id}.`,404);
+  const change=snapshot.price-snapshot.previousClose;
+  return {asset,price:snapshot.price,change,changePercent:Number((change/snapshot.previousClose*100).toFixed(6)),previousClose:snapshot.previousClose,open:snapshot.open,volume:snapshot.volume,dayLow:snapshot.low,dayHigh:snapshot.high,fiftyTwoWeekLow:null,fiftyTwoWeekHigh:null,updatedAt:snapshot.updatedAt,sparkline:[],source:'Alpaca'};
+}
+
+export async function getMarketQuote(asset:LiveMarketAsset,apiKey='',alpacaData?:AlpacaStockDataOptions):Promise<MarketQuote>{
   try{
-    const quote=await getCached(quoteCache,`${apiKey?'finnhub':'yahoo'}:${asset.id}`,5_000,async()=>{
+    const provider=alpacaProvider(alpacaData);
+    const quote=await getCached(quoteCache,`${provider&&asset.type==='STOCK'?'alpaca':apiKey?'finnhub':'yahoo'}:${asset.id}`,5_000,async()=>{
+      if(provider&&asset.type==='STOCK'){
+        try{return quoteFromAlpaca(asset,await provider.getQuote(asset.ticker));}catch{}
+      }
       if(apiKey){
         try{return await getFinnhubQuote(asset,apiKey);}
         catch{try{return quoteFromResult(asset,await fetchYahooChart(asset,'1d','1m'));}catch{throw new MarketDataError('Configured market data providers are unavailable.',503);}}
@@ -176,8 +189,22 @@ export async function getMarketQuote(asset:LiveMarketAsset,apiKey=''):Promise<Ma
   }
 }
 
-export async function getMarketHistory(asset:LiveMarketAsset,timeframe:TimeframeId,apiKey=''){
+export async function getMarketHistory(asset:LiveMarketAsset,timeframe:TimeframeId,apiKey='',alpacaData?:AlpacaStockDataOptions){
   const selection=TIMEFRAMES.find(item=>item.id===timeframe)||TIMEFRAMES[0];
+  const provider=alpacaProvider(alpacaData);
+  if(provider&&asset.type==='STOCK'){
+    try{
+      const end=new Date();
+      const start=new Date(end);
+      const days:Record<TimeframeId,number>={ '1d':1,'5d':5,'1m':31,'3m':92,'ytd':Math.ceil((end.getTime()-Date.UTC(end.getUTCFullYear(),0,1))/86_400_000),'1y':366,'3y':1097,'5y':1827,'max':3650 };
+      start.setUTCDate(start.getUTCDate()-days[timeframe]);
+      const intervals:Record<string,string>={'1m':'1Min','5m':'5Min','30m':'30Min','1d':'1Day','1wk':'1Week','1mo':'1Month'};
+      const candles=await provider.getBars(asset.ticker,start.toISOString(),end.toISOString(),intervals[selection.interval]||'1Min');
+      if(!candles.length)throw new MarketDataError(`No historical data is available for ${asset.id}.`,404);
+      const quote=await getMarketQuote(asset,apiKey,alpacaData);
+      return {quote,candles:candles.map(candle=>({...candle,time:Date.parse(candle.time)/1000})),timeframe,interval:selection.interval,source:'Alpaca'};
+    }catch{}
+  }
   if(apiKey){
     try{return {...await getFinnhubHistory(asset,selection.range,selection.interval,apiKey),timeframe,interval:selection.interval};}
     catch{try{return await getYahooMarketHistory(asset,timeframe,selection);}catch{throw new MarketDataError('Configured market data providers are unavailable.',503);}}
@@ -204,15 +231,21 @@ async function getYahooMarketHistory(asset:LiveMarketAsset,timeframe:TimeframeId
   return {quote:quoteFromResult(asset,result),candles,timeframe,interval:selection.interval,source:'Yahoo Finance'};
 }
 
-export async function getLiveMarketProviderStatus(apiKey=''){
+export async function getLiveMarketProviderStatus(apiKey='',alpacaData?:AlpacaStockDataOptions){
   const asset=getMarketAsset('AAPL')!;
+  const provider=alpacaProvider(alpacaData);
+  let alpacaStatus:'NOT_CONFIGURED'|'HEALTHY'|'AUTHENTICATION_FAILED'|'UNAVAILABLE'=provider?'UNAVAILABLE':'NOT_CONFIGURED';
+  if(provider){
+    try{await provider.healthCheck();alpacaStatus='HEALTHY';return {status:'AVAILABLE' as const,provider:'Alpaca',finnhubStatus:apiKey?'NOT_CONFIGURED' as const:'NOT_CONFIGURED' as const,fallbackProvider:null,alpacaStatus};}
+    catch(error){alpacaStatus=error instanceof Error&&/:(401|403)$/.test(error.message)?'AUTHENTICATION_FAILED':'UNAVAILABLE';}
+  }
   if(apiKey){
-    try{await getFinnhubQuote(asset,apiKey);return {status:'AVAILABLE' as const,provider:'Finnhub',finnhubStatus:'AVAILABLE' as const,fallbackProvider:null};}
+    try{await getFinnhubQuote(asset,apiKey);return {status:'AVAILABLE' as const,provider:'Finnhub',finnhubStatus:'AVAILABLE' as const,fallbackProvider:null,alpacaStatus};}
     catch{
-      try{await fetchYahooChart(asset,'1d','1m');return {status:'ERROR' as const,provider:'Yahoo Finance (fallback)',finnhubStatus:'ERROR' as const,fallbackProvider:'Yahoo Finance'};}
-      catch{return {status:'ERROR' as const,provider:'Unavailable',finnhubStatus:'ERROR' as const,fallbackProvider:null};}
+      try{await fetchYahooChart(asset,'1d','1m');return {status:'ERROR' as const,provider:'Yahoo Finance (fallback)',finnhubStatus:'ERROR' as const,fallbackProvider:'Yahoo Finance',alpacaStatus};}
+      catch{return {status:'ERROR' as const,provider:'Unavailable',finnhubStatus:'ERROR' as const,fallbackProvider:null,alpacaStatus};}
     }
   }
-  try{await fetchYahooChart(asset,'1d','1m');return {status:'AVAILABLE' as const,provider:'Yahoo Finance',finnhubStatus:'NOT_CONFIGURED' as const,fallbackProvider:null};}
-  catch{return {status:'ERROR' as const,provider:'Unavailable',finnhubStatus:'NOT_CONFIGURED' as const,fallbackProvider:null};}
+  try{await fetchYahooChart(asset,'1d','1m');return {status:'AVAILABLE' as const,provider:'Yahoo Finance',finnhubStatus:'NOT_CONFIGURED' as const,fallbackProvider:null,alpacaStatus};}
+  catch{return {status:'ERROR' as const,provider:'Unavailable',finnhubStatus:'NOT_CONFIGURED' as const,fallbackProvider:null,alpacaStatus};}
 }

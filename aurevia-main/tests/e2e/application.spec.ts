@@ -571,7 +571,7 @@ test('registration skips contact verification and platform health remains availa
 	const kycResponse=await page.request.get('/api/kyc');
 	expect((await kycResponse.json()).dob).toBe('2000-02-29T00:00:00.000Z');
 	const demoWallet=await page.request.get('/api/wallet');
-	expect(Number((await demoWallet.json()).balance)).toBe(10000);
+	expect(Number((await demoWallet.json()).balance)).toBe(5000);
 	await selectAccountMode(page,'REAL');
 	await page.goto('/dashboard');
 	await expect(page.getByRole('heading',{name:'Hello, Edited'})).toBeVisible();
@@ -581,7 +581,7 @@ test('registration skips contact verification and platform health remains availa
 	await page.goto('/dashboard');
 	await expect(page.getByRole('heading',{name:'Hello, Edited'})).toBeVisible();
 	await expect(page.locator('.dashboard-real-state')).toHaveCount(0);
-	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(10000);
+	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5000);
 	await logout(page);
 	const healthAfterLogout=await page.request.get('/api/health');
 	expect(healthAfterLogout.ok()).toBeTruthy();
@@ -723,7 +723,7 @@ test('account-mode changes refresh and isolate wallet, trade, history, and suppo
 	await expect(page.getByRole('button').filter({hasText:subject})).toBeVisible();
 });
 
-test('REAL simulated deposits and withdrawals require review and settle in the internal ledger',async({browser,page})=>{
+test('REAL-interface simulated deposits and withdrawals require admin review and update only the internal ledger',async({browser,page})=>{
 	await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
 	expect((await page.request.get('/api/admin/providers/status')).status()).toBe(403);
 	expect((await page.request.post('/api/webhooks/broker/unconfigured',{data:{eventId:'synthetic-test-event'}})).status()).toBe(503);
@@ -762,10 +762,10 @@ test('REAL simulated deposits and withdrawals require review and settle in the i
 		const statusResponse=await adminPage.request.get('/api/admin/providers/status');
 		expect(statusResponse.ok()).toBe(true);
 		const status=await statusResponse.json();
-		expect(status.realExecution).toMatchObject({status:'DISABLED',enabled:false,executionPathEnabled:false,adapterRegistered:false});
-		expect(status.funding).toMatchObject({status:'NOT_CONFIGURED',connected:false,workflowEnabled:false,configuredSimulatedRealCreditsEnabled:true,realMoneyMovementEnabled:false});
-		expect(status.investments).toMatchObject({status:'NOT_CONFIGURED',realLifecycleActionsEnabled:false});
-		expect(status.realExecution.configuredVariables).toHaveProperty('BROKER_API_KEY');
+		expect(status.internalSimulation).toMatchObject({adminAuthorization:'AVAILABLE',externalBrokerExecution:'DISABLED',externalPaymentProcessing:'DISABLED',externalInvestmentSettlement:'DISABLED',externalMoneyMovement:'DISABLED'});
+		expect(status.internalSimulation.accountLedger).toBe('AVAILABLE');
+		expect(status.internalSimulation.simulatedDepositsAndWithdrawals).toBe('AVAILABLE');
+		expect(status.marketData.usedForOrderExecution).toBe(false);
 		expect(JSON.stringify(status)).not.toContain('://');
 
 		const prooflessDepositApproval=await adminPage.request.patch('/api/admin/funding',{data:{id:fixture('REAL_DEPOSIT_NO_PROOF_ID'),decision:'APPROVED'}});
@@ -776,10 +776,9 @@ test('REAL simulated deposits and withdrawals require review and settle in the i
 		expect(Number((await depositApproval.json()).creditedAmount)).toBe(125);
 		const withdrawalApproval=await adminPage.request.patch('/api/admin/funding',{data:{id:fixture('REAL_WITHDRAWAL_ID'),decision:'APPROVED'}});
 		expect(withdrawalApproval.status()).toBe(200);
-		expect((await withdrawalApproval.json()).status).toBe('APPROVED');
-		const settlement=await adminPage.request.post('/api/admin/funding/settle',{data:{id:fixture('REAL_WITHDRAWAL_ID'),note:'Complete simulated withdrawal for workflow test'}});
-		expect(settlement.status()).toBe(200);
-		expect(await settlement.json()).toMatchObject({status:'COMPLETED',settlementReference:expect.stringMatching(/^SIMULATED-/)});
+		expect(await withdrawalApproval.json()).toMatchObject({status:'COMPLETED',settlementReference:`SIMULATED-WITHDRAWAL:${fixture('REAL_WITHDRAWAL_ID')}`});
+		const duplicateApproval=await adminPage.request.patch('/api/admin/funding',{data:{id:fixture('REAL_DEPOSIT_ID'),decision:'APPROVED'}});
+		expect(duplicateApproval.status()).toBe(409);
 		const fundingHistory=await adminPage.request.get('/api/admin/funding?history=true').then(response=>response.json());
 		expect(fundingHistory.find((row:{id:string})=>row.id===fixture('REAL_DEPOSIT_ID'))).toMatchObject({status:'APPROVED',accountMode:'REAL',creditedAmount:'125'});
 		expect(fundingHistory.find((row:{id:string})=>row.id===fixture('REAL_WITHDRAWAL_ID'))).toMatchObject({status:'COMPLETED',accountMode:'REAL',settledAt:expect.any(String)});
@@ -788,7 +787,7 @@ test('REAL simulated deposits and withdrawals require review and settle in the i
 	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(175);
 	const withdrawal=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'WITHDRAWAL',amount:10,currency:'USD'}});
 	expect(withdrawal.status()).toBe(201);
-	expect((await withdrawal.json()).method).toBe('Simulated REAL withdrawal');
+	expect((await withdrawal.json()).method).toBe('Internal simulated withdrawal');
 	const withdrawalAdminContext=await browser.newContext();
 	try{
 		const adminPage=await withdrawalAdminContext.newPage();
@@ -796,14 +795,11 @@ test('REAL simulated deposits and withdrawals require review and settle in the i
 		const submitted=await withdrawal.json();
 		const approval=await adminPage.request.patch('/api/admin/funding',{data:{id:submitted.id,decision:'APPROVED'}});
 		expect(approval.status()).toBe(200);
-		expect((await page.request.get('/api/wallet').then(response=>response.json())).transactions.find((item:{id:string})=>item.id===submitted.id)).toMatchObject({status:'APPROVED'});
-		const settlement=await adminPage.request.post('/api/admin/funding/settle',{data:{id:submitted.id}});
-		expect(settlement.status()).toBe(200);
-		expect((await settlement.json()).status).toBe('COMPLETED');
+		expect((await page.request.get('/api/wallet').then(response=>response.json())).transactions.find((item:{id:string})=>item.id===submitted.id)).toMatchObject({status:'COMPLETED',settlementReference:`SIMULATED-WITHDRAWAL:${submitted.id}`});
 	}finally{await withdrawalAdminContext.close();}
 	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(165);
 	await selectAccountMode(page,'DEMO');
-	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(10000);
+	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5000);
 });
 
 test('Account Funding loads its wallet independently and offers reviewed simulated REAL funding',async({page})=>{
@@ -812,35 +808,35 @@ test('Account Funding loads its wallet independently and offers reviewed simulat
 	await selectAccountMode(page,'DEMO');
 	await page.goto('/wallet');
 	await expect(page.getByRole('heading',{name:/wallet|funding/i}).first()).toBeVisible();
-	await expect(page.locator('.wallet-balance-value')).toHaveText('10,000.00 USD');
-	await expect(page.getByRole('status').filter({hasText:'DEMO deposits and withdrawals are unavailable.'})).toBeVisible();
+	await expect(page.locator('.wallet-balance-value')).toHaveText('5,000.00 USD');
+	await expect(page.getByRole('status').filter({hasText:'Internal simulated funding'})).toBeVisible();
 	await expect(page.getByLabel('Payment method')).toHaveCount(0);
-	await expect(page.locator('.wallet-type-switch')).toHaveCount(0);
+	await expect(page.locator('.wallet-type-switch')).toBeVisible();
 	await page.getByRole('button',{name:'Hide balances'}).click();
 	await expect(page.getByRole('button',{name:'Show balances'})).toBeVisible();
 	await page.getByRole('button',{name:'Show balances'}).click();
 	await page.route('**/api/payment-methods',route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Payment methods are temporarily unavailable.'})}));
 	await page.getByRole('button',{name:'Refresh wallet history'}).click();
 	await expect(page.getByText('Loading wallet data…')).toHaveCount(0);
-	await expect(page.locator('.wallet-balance-value')).toHaveText('10,000.00 USD');
-	await expect(page.getByRole('status').filter({hasText:'DEMO deposits and withdrawals are unavailable.'})).toBeVisible();
+	await expect(page.locator('.wallet-balance-value')).toHaveText('5,000.00 USD');
+	await expect(page.getByRole('status').filter({hasText:'Internal simulated funding'})).toBeVisible();
 	await page.unroute('**/api/payment-methods');
 	await page.route('**/api/wallet',route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Wallet data is temporarily unavailable.'})}));
 	await page.getByRole('button',{name:'Refresh wallet history'}).click();
 	await expect(page.getByText('Loading wallet data…')).toHaveCount(0);
 	await expect(page.locator('.wallet-balance-value')).toHaveText('Unavailable');
 	await expect(page.getByRole('alert').filter({hasText:'Wallet data is temporarily unavailable.'})).toBeVisible();
-	await expect(page.getByLabel('Amount',{exact:true})).toHaveCount(0);
+	await expect(page.getByLabel('Amount',{exact:true})).toBeVisible();
 	await page.unroute('**/api/wallet');
 	await page.getByRole('button',{name:'Refresh wallet history'}).click();
-	await expect(page.locator('.wallet-balance-value')).toHaveText('10,000.00 USD');
+	await expect(page.locator('.wallet-balance-value')).toHaveText('5,000.00 USD');
 	await selectAccountMode(page,'REAL');
 	await page.goto('/wallet');
 	const methods=await page.request.get('/api/payment-methods').then(response=>response.json());
-	expect(methods).toMatchObject({methods:[],fundingStatus:'MANUAL_REVIEW',realFundingAvailable:true,realWithdrawalAvailable:true,manualDepositReviewAvailable:true});
-	await expect(page.getByText(/REAL-mode funding is a simulated internal ledger workflow/i)).toBeVisible();
+	expect(methods).toMatchObject({methods:[],fundingStatus:'SIMULATED',simulationAvailable:true,realFundingAvailable:true,realWithdrawalAvailable:true,manualDepositReviewAvailable:true,externalPaymentProcessing:'DISABLED'});
+	await expect(page.getByText(/Internal simulated funding/)).toBeVisible();
 	await expect(page.getByLabel('Amount',{exact:true})).toBeVisible();
-	await expect(page.getByRole('button',{name:/Review deposit request/i})).toBeEnabled();
+	await expect(page.getByRole('button',{name:/Submit simulated deposit request/i})).toBeEnabled();
 	await expect(page.getByRole('alert').filter({hasText:'Wallet data is temporarily unavailable'})).toHaveCount(0);
 	for(const width of [320,375,390,430,1440]){
 		await page.setViewportSize({width,height:900});
@@ -947,7 +943,7 @@ test('closing a DEMO position records a sell execution, reconciles portfolio, an
 	expect(buy.ok()).toBeTruthy();
 	expect((await buy.json()).status).toBe('FILLED');
 	const afterBuyWallet=await page.request.get('/api/wallet').then(response=>response.json());
-	expect(Number(afterBuyWallet.balance)).toBeLessThan(10000);
+	expect(Number(afterBuyWallet.balance)).toBeLessThan(5000);
 	const positions=await page.request.get('/api/positions').then(response=>response.json());
 	expect(positions).toHaveLength(1);
 	const openPortfolio=await page.request.get('/api/portfolio').then(response=>response.json());
@@ -1068,7 +1064,7 @@ test('simulated investment lifecycle and trading work in both account modes',asy
 		await selectAccountMode(page,'DEMO');
 		const initialDemoWallet=await page.request.get('/api/wallet').then(response=>response.json());
 		const initialDemoBalance=Number(initialDemoWallet.balance);
-		expect(initialDemoBalance).toBeGreaterThanOrEqual(10000);
+		expect(initialDemoBalance).toBeGreaterThanOrEqual(5000);
 		await page.goto('/investments');
 		await expect(page.getByRole('heading',{name:'Available opportunities'})).toBeVisible();
 		await page.getByLabel('Amount (USD)').fill('1000');
@@ -1111,18 +1107,18 @@ test('simulated investment lifecycle and trading work in both account modes',asy
 		const realWalletAfterAllocation=await page.request.get('/api/wallet').then(response=>response.json());
 		expect(realWalletAfterAllocation.adminLedgerReceipts).toContainEqual(expect.objectContaining({reference:(await realAllocation.json()).reference,type:'CREDIT',currency:'USD',amount:'1000'}));
 			const unavailableMethods=await page.request.get('/api/payment-methods').then(response=>response.json());
-				expect(unavailableMethods).toMatchObject({methods:[],fundingStatus:'MANUAL_REVIEW',realFundingAvailable:true,realWithdrawalAvailable:true,manualDepositReviewAvailable:true});
+				expect(unavailableMethods).toMatchObject({methods:[],fundingStatus:'SIMULATED',simulationAvailable:true,realFundingAvailable:true,realWithdrawalAvailable:true,manualDepositReviewAvailable:true});
 			const existingFunding=await page.request.get('/api/wallet').then(response=>response.json());
 			const blockedFunding=await page.request.post('/api/wallet',depositPostOptions(randomUUID(),{type:'DEPOSIT',paymentMethodId:'not-configured',amount:10,currency:'USD',transactionReference:`E2E-${randomUUID()}`}));
 			expect(blockedFunding.status()).toBe(400);
-			expect((await blockedFunding.json()).error).toBe('payment method unavailable');
+			expect((await blockedFunding.json()).error).toContain('External payment methods are disabled');
 			expect(await page.request.get('/api/wallet').then(async response=>(await response.json()).transactions.length)).toBe(existingFunding.transactions.length);
 			const manualRequestResponse=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'DEPOSIT',amount:10,currency:'USD',transactionReference:`MANUAL-${randomUUID()}`}});
 			expect(manualRequestResponse.status()).toBe(201);
 			const manualRequest=await manualRequestResponse.json();
-			expect(manualRequest).toMatchObject({method:'Simulated REAL deposit',paymentMethodId:null,status:'PENDING_REVIEW',accountMode:'REAL',hasReceipt:false});
+			expect(manualRequest).toMatchObject({method:'Internal simulated deposit',paymentMethodId:null,status:'PENDING_REVIEW',accountMode:'REAL',hasReceipt:false});
 			await page.goto('/wallet');
-			await expect(page.getByText(/REAL-mode funding is a simulated internal ledger workflow/i)).toBeVisible();
+			await expect(page.getByText(/Internal simulated funding/i)).toBeVisible();
 			await expect(page.getByLabel('Amount',{exact:true})).toBeVisible();
 			await expect(page.locator('.transaction-method').filter({hasText:'Simulated Real Account deposit'})).toBeVisible();
 		await page.goto('/investments');
@@ -1161,8 +1157,8 @@ test('simulated investment lifecycle and trading work in both account modes',asy
 		await page.getByRole('button',{name:'Reset DEMO'}).click();
 		await page.getByLabel('Type RESET DEMO ACCOUNT to confirm').fill('RESET DEMO ACCOUNT');
 		await page.getByRole('button',{name:'Confirm DEMO reset'}).click();
-		await expect(page.getByRole('status')).toContainText('DEMO portfolio reset to $10,000.00');
-		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(10000);
+		await expect(page.getByRole('status')).toContainText('DEMO portfolio reset to $5,000.00');
+		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5000);
 		await selectAccountMode(page,'REAL');
 			await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(finalRealBalance);
 		await expectNoHorizontalOverflow(page);
@@ -1234,7 +1230,7 @@ test('Nova escalation reaches admin and admin response appears with notification
 	expect((await notificationReply.json()).answer).toMatch(/\d+ unread notification/);
 	const paymentReply=await page.request.post('/api/support/nova',{data:{question:'How do I make a deposit?',conversationId:randomUUID()}});
 	expect((await paymentReply.json()).answer).toContain('DEMO');
-	expect((await paymentReply.json()).answer).toContain('do not send real funds');
+	expect((await paymentReply.json()).answer).toContain('no payment provider');
 	const supportContact=await page.request.get('/api/support/contact').then(response=>response.json());
 	if(supportContact.email)await expect(page.getByRole('link',{name:new RegExp(supportContact.email.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'))})).toBeVisible();
 	else await expect(page.getByText('Direct email is not configured. Authenticated support tickets remain available.')).toBeVisible();
@@ -1525,7 +1521,7 @@ for(const viewport of viewports){
 test('DEMO order idempotency prevents duplicate fills and user history stays isolated',async({browser,page})=>{
 	await loginAs(page,fixture('LEGACY_USER_EMAIL'),fixture('LEGACY_USER_PASSWORD'));
 	const startingBalance=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
-	expect(startingBalance).toBe(10000);
+	expect(startingBalance).toBe(5000);
 	const symbol=fixture('INSTRUMENT_A');
 	const instruments=await page.request.get('/api/market').then(response=>response.json());
 	const instrument=instruments.find((item:{symbol:string})=>item.symbol===symbol);
@@ -1580,47 +1576,59 @@ test('DEMO order idempotency prevents duplicate fills and user history stays iso
 	}finally{await otherContext.close();}
 });
 
-test('DEMO deposits and withdrawals are unavailable to users and administrators',async({browser,page})=>{
+test('DEMO funding requests are admin-reviewed, idempotent, and ledger-backed',async({browser,page})=>{
 	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
+	await selectAccountMode(page,'REAL');
+	const startingRealBalance=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
 	await selectAccountMode(page,'DEMO');
 	const startingWallet=await page.request.get('/api/wallet').then(response=>response.json());
-	const methods=await page.request.get('/api/payment-methods').then(async response=>(await response.json()).methods);
-	expect(methods).toHaveLength(0);
-	for(const type of ['DEPOSIT','WITHDRAWAL'] as const){
-		const response=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type,paymentMethodId:'legacy-demo-method',amount:10,currency:'USD'}});
-		expect(response.status()).toBe(409);
-		expect((await response.json()).error).toBe('DEMO deposits and withdrawals are unavailable.');
-	}
-	const unchangedWallet=await page.request.get('/api/wallet').then(response=>response.json());
-	expect(unchangedWallet.transactions).toHaveLength(startingWallet.transactions.length);
-	expect(Number(unchangedWallet.balance)).toBe(Number(startingWallet.balance));
+	const methodStatus=await page.request.get('/api/payment-methods').then(response=>response.json());
+	expect(methodStatus).toMatchObject({methods:[],fundingStatus:'SIMULATED',externalPaymentProcessing:'DISABLED'});
+	const depositKey=randomUUID();
+	const depositPayload={type:'DEPOSIT',amount:20,currency:'USD'};
+	const depositResponse=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':depositKey},data:depositPayload});
+	expect(depositResponse.status()).toBe(201);
+	const deposit=await depositResponse.json();
+	expect(deposit).toMatchObject({type:'DEPOSIT',accountMode:'DEMO',status:'PENDING_REVIEW',method:'Internal simulated deposit'});
+	const depositReplay=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':depositKey},data:depositPayload});
+	expect(depositReplay.status()).toBe(200);
+	expect((await depositReplay.json()).id).toBe(deposit.id);
+	const withdrawalResponse=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'WITHDRAWAL',amount:5,currency:'USD'}});
+	expect(withdrawalResponse.status()).toBe(201);
+	const withdrawal=await withdrawalResponse.json();
+	expect(withdrawal).toMatchObject({type:'WITHDRAWAL',accountMode:'DEMO',status:'PENDING_REVIEW'});
+	expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(Number(startingWallet.balance));
+	const ownApproval=await page.request.patch('/api/admin/funding',{data:{id:deposit.id,decision:'APPROVED'}});
+	expect(ownApproval.status()).toBe(403);
 	await page.goto('/wallet');
-	await expect(page.getByRole('status').filter({hasText:'DEMO deposits and withdrawals are unavailable.'})).toBeVisible();
-	await expect(page.getByLabel('Amount',{exact:true})).toHaveCount(0);
-
-	const profile=await page.request.get('/api/profile').then(response=>response.json());
-	const legacyDeposit=await db.fundingRequest.create({data:{userId:profile.id,type:'DEPOSIT',method:'Legacy DEMO deposit',amount:10,currency:'USD',status:'PENDING_REVIEW',accountMode:'DEMO',idempotencyKey:randomUUID()}});
-	const legacyWithdrawal=await db.fundingRequest.create({data:{userId:profile.id,type:'WITHDRAWAL',method:'Legacy DEMO withdrawal',amount:10,currency:'USD',status:'APPROVED',accountMode:'DEMO',idempotencyKey:randomUUID()}});
+	await expect(page.getByRole('status').filter({hasText:'Internal simulated funding'})).toBeVisible();
+	await expect(page.getByLabel('Amount',{exact:true})).toBeVisible();
 	const adminContext=await browser.newContext();
 	try{
 		const adminPage=await adminContext.newPage();
 		await loginAs(adminPage,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
-		const approval=await adminPage.request.patch('/api/admin/funding',{data:{id:legacyDeposit.id,decision:'APPROVED'}});
-		expect(approval.status()).toBe(409);
-		expect((await approval.json()).error).toBe('DEMO deposits and withdrawals are unavailable.');
-		const lifecycle=await adminPage.request.post('/api/admin/funding/lifecycle',{headers:{'Idempotency-Key':randomUUID()},data:{id:legacyWithdrawal.id,action:'PROCESS',note:'Legacy request must remain unavailable'}});
-		expect(lifecycle.status()).toBe(409);
-		expect((await lifecycle.json()).error).toContain('simulated execution is unavailable');
-		const releaseKey=randomUUID();
-		const releaseBody={id:legacyWithdrawal.id,action:'FAIL',note:'Release stale DEMO reservation'};
-		const released=await adminPage.request.post('/api/admin/funding/lifecycle',{headers:{'Idempotency-Key':releaseKey},data:releaseBody});
-		expect(released.status()).toBe(200);
-		expect((await released.json()).status).toBe('FAILED');
-		const replay=await adminPage.request.post('/api/admin/funding/lifecycle',{headers:{'Idempotency-Key':releaseKey},data:releaseBody});
-		expect(replay.status()).toBe(200);
-		expect((await replay.json()).replayed).toBe(true);
-		expect((await db.fundingRequest.findUniqueOrThrow({where:{id:legacyWithdrawal.id}})).status).toBe('FAILED');
+		const adminId=await adminPage.request.get('/api/profile').then(async response=>(await response.json()).id);
+		const info=await adminPage.request.patch('/api/admin/funding',{data:{id:deposit.id,decision:'REQUEST_INFO',note:'Please clarify this simulated request.'}});
+		expect(info.status()).toBe(200);
+		expect((await info.json()).status).toBe('PENDING');
+		const approval=await adminPage.request.patch('/api/admin/funding',{data:{id:deposit.id,decision:'APPROVED'}});
+		expect(approval.status()).toBe(200);
+		expect(await approval.json()).toMatchObject({status:'APPROVED',creditedAmount:'20'});
+		const duplicateApproval=await adminPage.request.patch('/api/admin/funding',{data:{id:deposit.id,decision:'APPROVED'}});
+		expect(duplicateApproval.status()).toBe(409);
+		const withdrawalApproval=await adminPage.request.patch('/api/admin/funding',{data:{id:withdrawal.id,decision:'APPROVED'}});
+		expect(withdrawalApproval.status()).toBe(200);
+		expect(await withdrawalApproval.json()).toMatchObject({status:'COMPLETED',settlementReference:`SIMULATED-WITHDRAWAL:${withdrawal.id}`});
+		const fundingAudit=await db.auditLog.findFirstOrThrow({where:{entity:'FUNDING',entityId:deposit.id,action:'FUNDING_APPROVED'}});
+		expect(fundingAudit.actorId).toBe(adminId);
+		expect(fundingAudit.metadata).toMatchObject({simulated:true,previousBalance:String(startingWallet.balance),resultingBalance:String(Number(startingWallet.balance)+20)});
 	}finally{await adminContext.close();}
+	const completedWallet=await page.request.get('/api/wallet').then(response=>response.json());
+	expect(Number(completedWallet.balance)).toBe(Number(startingWallet.balance)+15);
+	expect(completedWallet.transactions.find((item:{id:string})=>item.id===withdrawal.id)).toMatchObject({status:'COMPLETED',previousBalance:String(Number(startingWallet.balance)+20),resultingBalance:String(Number(startingWallet.balance)+15)});
+	await selectAccountMode(page,'REAL');
+	expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(startingRealBalance);
+	await selectAccountMode(page,'DEMO');
 });
 
 test('display currency preference persists across account and activity surfaces without changing ledger cash',async({page})=>{
@@ -1674,54 +1682,42 @@ test('administrator market tick is protected, deterministic, and idempotent',asy
 	}finally{await adminContext.close();}
 });
 
-test('wallet manual REAL deposit request does not require an external payment screenshot',async({page})=>{
+test('wallet simulated REAL deposit request is internal and does not require payment proof',async({page})=>{
 	await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
 	await selectAccountMode(page,'REAL');
 	await page.goto('/wallet');
-	await expect(page.getByText(/simulated internal ledger workflow/i)).toBeVisible();
+	await expect(page.getByText(/Internal simulated funding/i)).toBeVisible();
 	await page.getByLabel('Amount',{exact:true}).fill('35');
-	await page.getByRole('button',{name:'Review deposit request'}).click();
+	await page.getByRole('button',{name:'Submit simulated deposit request'}).click();
 	await expect(page.getByRole('heading',{name:'Confirm deposit request'})).toBeVisible();
 	await page.getByRole('button',{name:'Confirm request'}).click();
 	await expect(page.getByRole('status').filter({hasText:'submitted for administrator review'})).toBeVisible();
 	await expect(page.getByRole('article',{name:'Deposit pending receipt'})).toBeVisible();
 	await expect(page.getByRole('article',{name:'Deposit pending receipt'}).getByText(/SIMULATED INTERNAL LEDGER RECORD/)).toBeVisible();
 	const wallet=await page.request.get('/api/wallet').then(response=>response.json());
-	expect(wallet.transactions[0]).toMatchObject({type:'DEPOSIT',status:'PENDING_REVIEW',hasReceipt:false,method:'Simulated REAL deposit'});
+	expect(wallet.transactions[0]).toMatchObject({type:'DEPOSIT',status:'PENDING_REVIEW',hasReceipt:false,method:'Internal simulated deposit'});
 });
 
-test('configured Bitcoin methods show their address and a locally generated QR code',async({browser,page})=>{
+test('external payment methods cannot be configured or exposed to users',async({browser,page})=>{
 	const adminContext=await browser.newContext();
-	let methodId='';
-	let investorLoggedIn=false;
 	try{
 		const adminPage=await adminContext.newPage();
 		await loginAs(adminPage,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
 		const created=await adminPage.request.post('/api/admin/payment-methods',{data:{name:`E2E Bitcoin ${randomUUID()}`,enabled:true,demoOnly:false,depositEnabled:true,withdrawalEnabled:false,requiresNetwork:true,currencies:['BTC'],destination:'bc1qexampleaddress',instructions:'Use the Bitcoin network.',minimumAmount:0,maximumAmount:null,processingNotes:null,displayOrder:999}});
-		expect(created.ok()).toBe(true);
-		methodId=(await created.json()).id;
+		expect(created.status()).toBe(409);
+		expect((await created.json()).error).toContain('External payment processing is disabled');
+		expect(await adminPage.request.get('/api/admin/payment-methods').then(response=>response.json())).toEqual([]);
 		await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
-		investorLoggedIn=true;
 		await selectAccountMode(page,'REAL');
 		await page.goto('/wallet');
-		await expect(page.getByText('Configured BTC receiving address')).toBeVisible();
-		await expect(page.getByText('bc1qexampleaddress')).toBeVisible();
-		const qr=page.getByRole('img',{name:'QR code for the configured Bitcoin payment address'});
-		await expect(qr).toBeVisible();
-		expect(await qr.getAttribute('src')).toMatch(/^data:image\/png;base64,/);
-	}finally{
-		if(methodId){
-			const adminPage=await adminContext.newPage();
-			await loginAs(adminPage,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
-			await adminPage.request.patch('/api/admin/payment-methods',{data:{id:methodId,name:`E2E Bitcoin disabled ${randomUUID()}`,enabled:false,demoOnly:false,depositEnabled:true,withdrawalEnabled:false,requiresNetwork:true,currencies:['BTC'],destination:'bc1qexampleaddress',instructions:'Use the Bitcoin network.',minimumAmount:0,maximumAmount:null,processingNotes:null,displayOrder:999}});
-			await adminPage.close();
-		}
-		if(investorLoggedIn)await selectAccountMode(page,'DEMO');
-		await adminContext.close();
-	}
+		const methods=await page.request.get('/api/payment-methods').then(response=>response.json());
+		expect(methods).toMatchObject({methods:[],externalPaymentProcessing:'DISABLED'});
+		await expect(page.getByText(/No payment evidence or external destination is required/i)).toBeVisible();
+		await expect(page.getByText(/no payment processor, bank, or crypto network is contacted/i)).toBeVisible();
+	}finally{await adminContext.close();}
 });
 
-test('admin funding permissions do not override DEMO funding restrictions',async({browser,page})=>{
+test('admin funding permissions gate DEMO simulated requests',async({browser,page})=>{
 	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
 	const userProfile=await page.request.get('/api/profile').then(response=>response.json());
 	const methods=await page.request.get('/api/payment-methods').then(async response=>(await response.json()).methods);
@@ -1746,14 +1742,18 @@ test('admin funding permissions do not override DEMO funding restrictions',async
 		expect((await blockedWithdrawal.json()).error).toBe('withdrawal disabled');
 		const enabled=await adminPage.request.patch('/api/admin/users',{data:{userId:userProfile.id,depositEnabled:true,withdrawalEnabled:true}});
 		expect(enabled.ok()).toBeTruthy();
-		for(const type of ['DEPOSIT','WITHDRAWAL'] as const){
-			const blocked=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type,amount:25,currency:'USD'}});
-			expect(blocked.status()).toBe(409);
-			expect((await blocked.json()).error).toBe('DEMO deposits and withdrawals are unavailable.');
-		}
+		const deposit=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'DEPOSIT',amount:25,currency:'USD'}});
+		const withdrawal=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'WITHDRAWAL',amount:10,currency:'USD'}});
+		expect(deposit.status()).toBe(201);
+		expect(withdrawal.status()).toBe(201);
+		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(Number(startingWallet.balance));
+		const reviewedDeposit=await adminPage.request.patch('/api/admin/funding',{data:{id:(await deposit.json()).id,decision:'APPROVED'}});
+		const reviewedWithdrawal=await adminPage.request.patch('/api/admin/funding',{data:{id:(await withdrawal.json()).id,decision:'APPROVED'}});
+		expect(reviewedDeposit.status()).toBe(200);
+		expect((await reviewedWithdrawal.json()).status).toBe('COMPLETED');
 		const finalWallet=await page.request.get('/api/wallet').then(response=>response.json());
-		expect(finalWallet.transactions).toHaveLength(startingWallet.transactions.length);
-		expect(Number(finalWallet.balance)).toBe(Number(startingWallet.balance));
+		expect(finalWallet.transactions).toHaveLength(startingWallet.transactions.length+2);
+		expect(Number(finalWallet.balance)).toBe(Number(startingWallet.balance)+15);
 	}finally{await adminContext.close();}
 });
 

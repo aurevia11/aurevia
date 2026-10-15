@@ -4,9 +4,6 @@ import {Server as IOServer} from 'socket.io';
 import {loadEnvConfig} from '@next/env';
 import {tickMarkets} from './lib/market';
 import {settleMaturedSimulatedInvestments} from './lib/demo-investment-settlement';
-import {createIndividualTradingApiProviderFromEnvironment} from './lib/providers/alpaca-crypto-provider';
-import {registerExecutionProvider} from './lib/providers/registry';
-import {getServerConfiguration} from './lib/config/env';
 import {resolveRenderApplicationUrls} from './lib/config/render-urls';
 
 loadEnvConfig(process.cwd());
@@ -28,9 +25,6 @@ if(!process.env.NEXTAUTH_URL){
 if(!process.env.NEXT_PUBLIC_APP_URL){
 	process.env.NEXT_PUBLIC_APP_URL=process.env.NEXTAUTH_URL;
 }
-const tradingProvider=createIndividualTradingApiProviderFromEnvironment();
-if(tradingProvider)registerExecutionProvider(tradingProvider,{executionEnabled:getServerConfiguration().execution.realEnabled&&tradingProvider.executionMode==='LIVE'});
-
 const app=next({dev});
 const handle=app.getRequestHandler();
 const configuredPublicUrl=process.env.NEXT_PUBLIC_APP_URL||process.env.NEXTAUTH_URL;
