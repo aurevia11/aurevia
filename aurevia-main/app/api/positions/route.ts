@@ -28,7 +28,7 @@ export async function POST(request:Request){
  try{
   const user=await requireUser();
   const {positionId}=closeSchema.parse(await request.json());
-  const closed=await db.$transaction(tx=>closeSimulatedPositionTx(tx,user.id,positionId),{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+    const closed=await db.$transaction(tx=>closeSimulatedPositionTx(tx,user.id,positionId),{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:5_000,timeout:15_000});
   return NextResponse.json(jsonSafe(closed));
  }catch(error){
   if(error instanceof ZodError)return NextResponse.json({error:'Invalid position.'},{status:400});

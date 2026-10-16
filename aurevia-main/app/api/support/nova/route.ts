@@ -1,5 +1,5 @@
 import {NextResponse} from 'next/server';
-import {AccountMode} from '@prisma/client';
+import {AccountMode,FundingType} from '@prisma/client';
 import {z,ZodError} from 'zod';
 import {getServerSession} from 'next-auth';
 import {authOptions} from '@/lib/auth-options';
@@ -122,7 +122,7 @@ export async function POST(request:Request){
 				auditAction='trade-plan-calculation';
 			}
 		}
-		if(userId&&/\b(i|my|mine|account|balance|wallet|portfolio|positions?|holdings?|orders?|trades?|watchlists?|tickets?|tiers?|kyc|verification|notifications?|deposits?|withdrawals?|payments?)\b/i.test(input.question)){
+		if(userId&&/\b(i|my|mine|account|balance|wallet|portfolio|positions?|holdings?|orders?|trades?|investments?|watchlists?|tickets?|tiers?|kyc|verification|notifications?|deposits?|withdrawals?|payments?)\b/i.test(input.question)){
 			const user=await db.user.findUnique({where:{id:userId},select:{id:true,accountMode:true,approvedTier:true,kycStatus:true,kyc:{select:{submittedAt:true}},kycDocuments:{where:{kind:'IDENTITY_DOCUMENT',status:'APPROVED'},select:{id:true}}}});
 			if(user){
 				const requested=input.question.toLowerCase();
@@ -152,6 +152,18 @@ export async function POST(request:Request){
 					answers.push(`${user.accountMode} order history contains ${orderCount} record${orderCount===1?'':'s'}${recent?`. Latest orders: ${recent}`:''}. A request is not a fill; only the stored execution/provider status is reported.`);
 					eventTypes.push('ORDER_HISTORY_LOOKUP');
 				}
+				if(/\binvestments?\b/.test(requested)){
+					const eligibility=user.accountMode==='DEMO'?{demoEligible:true}:{realEligible:true};
+					const [count,investments,opportunities]=await Promise.all([
+						db.investmentRequest.count({where:{userId:user.id,accountMode:user.accountMode}}),
+						db.investmentRequest.findMany({where:{userId:user.id,accountMode:user.accountMode},orderBy:{requestedAt:'desc'},take:5,select:{amount:true,status:true,requestedAt:true,activatedAt:true,maturesAt:true,simulatedPayout:true,opportunity:{select:{title:true}}}}),
+						db.investmentOpportunity.findMany({where:{status:'AVAILABLE',...eligibility},orderBy:{createdAt:'desc'},take:5,select:{title:true,minimumAmount:true,durationDays:true,targetReturnPercent:true}}),
+					]);
+					const recent=investments.map(item=>`${item.opportunity.title}: ${item.amount.toString()} USD · ${item.status.replaceAll('_',' ')}${item.maturesAt?` · matures ${item.maturesAt.toISOString()}`:''}${item.status==='SETTLED'&&item.simulatedPayout?` · virtual payout ${item.simulatedPayout.toString()} USD`:''}`).join('; ');
+					const plans=opportunities.map(item=>`${item.title} · minimum ${item.minimumAmount.toString()} USD · ${item.durationDays} days${item.targetReturnPercent===null?'':` · configured simulation target ${item.targetReturnPercent.toString()}%`}`).join('; ');
+					answers.push(`Your ${user.accountMode} account has ${count} simulated investment request${count===1?'':'s'}${recent?`. Recent activity: ${recent}`:'. No investment requests are recorded.'}${plans?` Available simulated plans: ${plans}.`:''} Any configured target and payout are virtual simulation results, not guaranteed or external investment returns.`);
+					eventTypes.push('INVESTMENT_CONTEXT_LOOKUP');
+				}
 				if(/\bwatchlist\b/.test(requested)){
 					answers.push('I cannot read a saved watchlist from the server in this session. Open Markets to review the watchlist saved for this device and account.');
 					eventTypes.push('WATCHLIST_SOURCE_UNAVAILABLE');
@@ -176,8 +188,9 @@ export async function POST(request:Request){
 					eventTypes.push('NOTIFICATION_SUMMARY_LOOKUP');
 				}
 				if(/\b(deposits?|withdrawals?|payments?|payouts?)\b/.test(requested)){
-					await db.fundingRequest.count({where:{userId:user.id,accountMode:user.accountMode}});
-					answers.push(`Your ${user.accountMode} account supports internal simulated deposit and withdrawal requests in Wallet. An authorized Aurevia administrator reviews requests and any ledger changes; no payment provider, bank, broker, or crypto network is contacted. A request or evidence attachment is not proof of a real payment.`);
+					const requests=await db.fundingRequest.findMany({where:{userId:user.id,accountMode:user.accountMode,type:{in:[FundingType.DEPOSIT,FundingType.WITHDRAWAL]}},orderBy:{createdAt:'desc'},take:5,select:{type:true,status:true,amount:true,currency:true}});
+					const recent=requests.map(item=>`${item.type.toLowerCase()} ${item.amount.toString()} ${item.currency} · ${item.status.toLowerCase().replaceAll('_',' ')}`).join('; ');
+					answers.push(`Your ${user.accountMode} account supports internal simulated deposit and withdrawal requests in Wallet. ${recent?`Recent requests: ${recent}.`:'No funding requests are recorded.'} An authorized Aurevia administrator reviews requests and any ledger changes; no payment provider, bank, broker, or crypto network is contacted. A request or evidence attachment is not proof of a real payment.`);
 					eventTypes.push('PAYMENT_INSTRUCTIONS_LOOKUP');
 				}
 				accountAnswer=answers.join(' ');

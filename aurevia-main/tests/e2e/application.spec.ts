@@ -1228,6 +1228,10 @@ test('Nova escalation reaches admin and admin response appears with notification
 	expect((await watchlistReply.json()).answer).toContain('cannot read a saved watchlist from the server');
 	const notificationReply=await page.request.post('/api/support/nova',{data:{question:'How many unread notifications do I have?',conversationId:randomUUID()}});
 	expect((await notificationReply.json()).answer).toMatch(/\d+ unread notification/);
+	const investmentReply=await page.request.post('/api/support/nova',{data:{question:'What are my investment requests and available plans?',conversationId:randomUUID()}});
+	expect(investmentReply.status()).toBe(200);
+	expect((await investmentReply.json()).answer).toContain('simulated investment request');
+	expect((await investmentReply.json()).answer).toContain('virtual simulation results');
 	const paymentReply=await page.request.post('/api/support/nova',{data:{question:'How do I make a deposit?',conversationId:randomUUID()}});
 	expect((await paymentReply.json()).answer).toContain('DEMO');
 	expect((await paymentReply.json()).answer).toContain('no payment provider');
@@ -1790,9 +1794,9 @@ test('approved deposit receipts use the credited amount and reviewer audit',asyn
 	expect((await downloadPromise).suggestedFilename()).toContain('approved');
 });
 
-test('matured DEMO investments automatically credit their configured target once',async({page})=>{
+test('matured no-approval DEMO investments automatically credit their configured target once',async({page})=>{
 	await loginAs(page,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
-	const opportunityResponse=await page.request.post('/api/admin/investments',{data:{title:'E2E automatic maturity',category:'Simulated Bitcoin',description:'Disposable target return investment for maturity processing coverage.',assetSymbol:'BTC',minimumAmount:10,maximumAmount:1000,targetReturnPercent:15,durationDays:1,startsAt:null,maturesAt:null,riskLevel:'MODERATE',status:'AVAILABLE',demoEligible:true,realEligible:false,requiresApproval:true,targetPrice:null,stopPrice:null}});
+	const opportunityResponse=await page.request.post('/api/admin/investments',{data:{title:'E2E automatic maturity',category:'Simulated Bitcoin',description:'Disposable target return investment for maturity processing coverage.',assetSymbol:'BTC',minimumAmount:10,maximumAmount:1000,targetReturnPercent:15,durationDays:1,startsAt:null,maturesAt:null,riskLevel:'MODERATE',status:'AVAILABLE',demoEligible:true,realEligible:false,requiresApproval:false,targetPrice:null,stopPrice:null}});
 	expect(opportunityResponse.status()).toBe(201);
 	const opportunity=await opportunityResponse.json();
 	await logout(page);
@@ -1802,12 +1806,7 @@ test('matured DEMO investments automatically credit their configured target once
 	const requestResponse=await page.request.post('/api/investments',{headers:{'Idempotency-Key':randomUUID()},data:{opportunityId:opportunity.id,amount:500}});
 	expect(requestResponse.status()).toBe(201);
 	const investment=await requestResponse.json();
-	await logout(page);
-	await loginAs(page,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
-	for(const action of ['approve','activate']){
-		const response=await page.request.patch('/api/admin/investments',{data:{requestId:investment.id,action}});
-		expect(response.status()).toBe(200);
-	}
+	expect(investment).toMatchObject({status:'ACTIVE',activatedAt:expect.any(String),maturesAt:expect.any(String)});
 	const testDatabase=new PrismaClient();
 	try{await testDatabase.investmentRequest.update({where:{id:investment.id},data:{maturesAt:new Date(Date.now()-1000)}});}
 	finally{await testDatabase.$disconnect();}
@@ -1817,8 +1816,6 @@ test('matured DEMO investments automatically credit their configured target once
 	expect(settled.status).toBe('SETTLED');
 	expect(Number(settled.simulatedPayout)).toBe(575);
 	expect(settled.settlementReference).toBe(`SIMULATED-AUTO-SETTLEMENT:DEMO:${investment.id}`);
-	await logout(page);
-	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
 	await selectAccountMode(page,'DEMO');
 	const endingBalance=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
 	expect(endingBalance).toBeCloseTo(startingBalance+75,2);

@@ -130,7 +130,7 @@ export async function placeOrder(userId:string,accountMode:AccountMode,input:Pla
   await createNotification(tx,{userId,type:NotificationType.TRADE,title:`${accountMode} simulated order submitted`,message:`Your ${input.side.toLowerCase()} ${input.type.toLowerCase()} order for ${inst.symbol} was submitted using simulated execution. No external order was placed.`,dedupeKey:`order:${order.id}:submitted`,relatedEntity:'ORDER',relatedId:order.id,actionUrl:'/trade'});
    if(!executable(input.type,input.side,market,price,stop))return order;
    return executeOrderTx(tx,order.id,market);
- },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+ },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:5_000,timeout:15_000});
  try{return await create();}
  catch(error){
   if(error&&typeof error==='object'&&'code'in error&&['P2002','P2034'].includes(String(error.code))){
@@ -147,7 +147,7 @@ export async function processOpenOrders(){
  for(const o of orders){
    const p=Number(o.instrument.price); const hit=executable(o.type,o.side,p,o.price===null?undefined:Number(o.price),o.stopPrice===null?undefined:Number(o.stopPrice));
    if(!hit)continue;
-   try{await db.$transaction(tx=>executeOrderTx(tx,o.id,p),{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});}
+  try{await db.$transaction(tx=>executeOrderTx(tx,o.id,p),{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:5_000,timeout:15_000});}
   catch(e){if(e instanceof Error&&['INSUFFICIENT_SIMULATED_BALANCE','INSUFFICIENT_POSITION','ORDER_NOT_OPEN','ORDER_FILLED'].includes(e.message))await db.$transaction(async tx=>{const rejected=await tx.order.updateMany({where:{id:o.id,status:OrderStatus.OPEN},data:{status:OrderStatus.REJECTED}});if(rejected.count){await tx.auditLog.create({data:{actorId:o.userId,action:`${o.accountMode}_SIMULATED_ORDER_REJECTED`,entity:'ORDER',entityId:o.id,metadata:{oldState:OrderStatus.OPEN,newState:OrderStatus.REJECTED,accountMode:o.accountMode,simulated:true,reason:e.message}}});await createNotification(tx,{userId:o.userId,type:NotificationType.TRADE,title:`${o.accountMode} simulated order rejected`,message:`Your ${o.side.toLowerCase()} order for ${o.instrument.symbol} was rejected in the simulated account.`,dedupeKey:`order:${o.id}:rejected`,relatedEntity:'ORDER',relatedId:o.id,actionUrl:'/trade'});}});}
  }
 }

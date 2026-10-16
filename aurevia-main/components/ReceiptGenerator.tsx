@@ -62,15 +62,16 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 	}
 
 	return <div className="grid min-w-0 gap-3">
-		<article ref={receiptRef} className="w-full max-w-2xl border border-[#b79b56] bg-[#f5f3ea] p-5 text-[#10251d] shadow-sm sm:p-8" aria-label={`${title} ${receipt.status.toLowerCase()} receipt`}>
-			<header className="flex items-center justify-between gap-3 border-b border-slate-200 pb-5">
-				<div className="flex items-center gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-full bg-[#10251d] text-lg font-bold text-[#d6bd79]">A</span><div><b className="block text-base">Aurevia Stock Exchange</b><span className="text-xs text-slate-600">Simulated account activity</span></div></div>
+		<article ref={receiptRef} className="w-full max-w-2xl overflow-hidden border border-[#b79b56] bg-[#f8f8f4] text-[#13241d] shadow-lg" aria-label={`${title} ${receipt.status.toLowerCase()} receipt`}>
+			<header className="flex items-center justify-between gap-3 bg-[#10251d] px-5 py-5 text-[#f8f8f4] sm:px-8">
+				<div className="flex items-center gap-3"><span className="grid size-11 shrink-0 place-items-center border border-[#c5a46b] bg-[#0b1914] text-lg font-bold text-[#d6bd79]">A</span><div><b className="block text-base">Aurevia Stock Exchange</b><span className="text-xs text-[#bdc9bf]">Simulated account activity</span></div></div>
 				<span className={`shrink-0 border px-3 py-1 text-xs font-bold ${statusTone}`}>{receipt.status.replaceAll('_',' ')}</span>
 			</header>
-			{simulated&&<p className="mt-4 border border-[#b79b56] bg-[#f4eedb] px-3 py-2 text-xs font-bold text-[#4c3c15]">SIMULATED INTERNAL LEDGER RECORD · No external payment, execution, or payout occurred.</p>}
-			{receipt.accountMode&&<p className="mt-3 text-xs font-semibold uppercase text-[#29493a]">{receipt.accountMode} simulated account</p>}
-			<div className="py-5"><p className="text-xs font-semibold uppercase text-slate-600">{title} receipt</p><h3 className="mt-2 text-2xl font-semibold">{completed?`${title} completed`:approved?`${title} approved`:receipt.status==='REJECTED'?`${title} rejected`:receipt.status==='CANCELLED'?`${title} cancelled`:`${title} request`}</h3><p className="mt-1 text-sm text-slate-600">Requested {dateLabel(receipt.createdAt)}</p></div>
-			<dl className="grid gap-x-8 border-y border-slate-200 py-4 text-sm sm:grid-cols-2">
+			<div className="px-5 pb-6 pt-5 sm:px-8 sm:pb-8">
+			{simulated&&<p className="border-l-2 border-[#b79b56] bg-[#f3f0e5] px-3 py-2 text-xs font-bold text-[#4c3c15]">SIMULATED INTERNAL LEDGER RECORD · No external payment, execution, or payout occurred.</p>}
+			{receipt.accountMode&&<p className="mt-5 text-xs font-semibold uppercase text-[#29493a]">{receipt.accountMode} simulated account</p>}
+			<div className="py-5"><p className="text-xs font-semibold uppercase text-slate-600">{title} receipt</p><h3 className="mt-2 text-2xl font-semibold text-[#10251d]">{completed?`${title} completed`:approved?`${title} approved`:receipt.status==='REJECTED'?`${title} rejected`:receipt.status==='CANCELLED'?`${title} cancelled`:`${title} request`}</h3><p className="mt-1 text-sm text-slate-600">Requested {dateLabel(receipt.createdAt)}</p></div>
+			<dl className="grid gap-x-8 border-y border-[#d8d9ce] py-4 text-sm sm:grid-cols-2">
 				<div className="py-2"><dt className="text-xs text-slate-500">Transaction reference</dt><dd className="mt-1 break-all font-medium">{receipt.reference}</dd></div>
 				{receipt.accountReference&&<div className="py-2"><dt className="text-xs text-slate-500">Account reference</dt><dd className="mt-1 break-all font-medium">{receipt.accountReference}</dd></div>}
 				{receipt.externalReference&&<div className="py-2"><dt className="text-xs text-slate-500">Internal request note</dt><dd className="mt-1 break-all font-medium">{receipt.externalReference}</dd></div>}
@@ -81,16 +82,15 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 					{kind==='DEPOSIT'&&<div className="py-2"><dt className="text-xs text-slate-500">Credited amount</dt><dd className="mt-1 font-semibold text-emerald-800">{amountLabel(receipt.creditedAmount??receipt.amount,receipt.currency)}</dd></div>}
 					<div className="py-2"><dt className="text-xs text-slate-500">{completed?'Completion date':'Approval date'}</dt><dd className="mt-1 font-medium">{dateLabel(receipt.completedAt||receipt.reviewedAt||receipt.createdAt)}</dd></div>
 					<div className="py-2 sm:col-span-2"><dt className="text-xs text-slate-500">Admin reference</dt><dd className="mt-1 break-all font-medium">{receipt.reference}</dd></div>
-					{receipt.reviewedBy&&<div className="py-2 sm:col-span-2"><dt className="text-xs text-slate-500">Reviewed by</dt><dd className="mt-1 font-medium">{receipt.reviewedBy.name||receipt.reviewedBy.email}</dd>{receipt.reviewedBy.name&&<dd className="break-all text-xs text-slate-500">{receipt.reviewedBy.email}</dd>}</div>}
+					{receipt.reviewedBy&&<div className="py-2 sm:col-span-2"><dt className="text-xs text-slate-500">Reviewed by</dt><dd className="mt-1 font-medium">{receipt.reviewedBy.name||'Authorized Aurevia administrator'}</dd></div>}
 				</>}
 				{receipt.previousBalance!==null&&receipt.previousBalance!==undefined&&<div className="py-2"><dt className="text-xs text-slate-500">Previous simulated balance</dt><dd className="mt-1 font-medium">{amountLabel(receipt.previousBalance,receipt.currency)}</dd></div>}
 				{receipt.resultingBalance!==null&&receipt.resultingBalance!==undefined&&<div className="py-2"><dt className="text-xs text-slate-500">Resulting simulated balance</dt><dd className="mt-1 font-medium">{amountLabel(receipt.resultingBalance,receipt.currency)}</dd></div>}
 				{receipt.adminNote&&<div className="py-2 sm:col-span-2"><dt className="text-xs text-slate-500">Admin review note</dt><dd className="mt-1 break-words font-medium">{receipt.adminNote}</dd></div>}
 			</dl>
-			<footer className="border-t border-slate-200 pt-3 text-xs text-slate-600">Computer-generated record from Aurevia Stock Exchange. Internal simulation only.</footer>
 			<p className="py-5 text-sm leading-6 text-slate-700">{receipt.status==='REJECTED'?`This simulated request was rejected.${receipt.adminNote?` Admin note: ${receipt.adminNote}`:''}`:simulated?'This receipt documents a simulated internal ledger record only. It is not evidence of a real payment, held asset, broker execution, or payout.':kind==='DEPOSIT'?approved?'The approved amount has been credited to your simulated account ledger.':'Your simulated deposit request is awaiting administrator review; no ledger credit has been posted.':kind==='WITHDRAWAL'?completed?'The simulated withdrawal was debited from the internal account ledger. No external payout was made.':'Your simulated withdrawal request is awaiting administrator review; no ledger debit has been posted.':`The administrator recorded this ${kind.toLowerCase()} in your account ledger.`}</p>
-			<footer className="border-t border-slate-200 pt-3 text-xs text-slate-600">Computer-generated record from Aurevia Stock Exchange. Internal simulation only.</footer>
-			<footer className="border-t border-slate-200 pt-3 text-xs text-slate-600">Computer-generated record from Aurevia Stock Exchange. Internal simulation only.</footer>
+			<footer className="border-t border-[#d8d9ce] pt-3 text-xs text-slate-600">Computer-generated record from Aurevia Stock Exchange. Internal simulation only.</footer>
+			</div>
 		</article>
 		<div className="flex flex-wrap gap-2"><button type="button" className="btn min-h-10 bg-white/5" disabled={busy} onClick={()=>void exportReceipt('png')}><Download size={14}/>{busy?'Preparing…':'Download PNG'}</button><button type="button" className="btn min-h-10 bg-white/5" disabled={busy} onClick={()=>void exportReceipt('pdf')}><Download size={14}/>{busy?'Preparing…':'Download PDF'}</button></div>
 		{error&&<p className="text-sm text-loss" role="alert">{error}</p>}

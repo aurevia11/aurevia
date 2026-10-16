@@ -108,7 +108,7 @@ export async function POST(request:Request){
     await tx.auditLog.create({data:{actorId:admin.id,action:'INVESTMENT_ADMIN_INITIATED',entity:'INVESTMENT',entityId:investment.id,metadata:{userId:user.id,opportunityId:opportunity.id,accountMode:input.accountMode,amount:amount.toString(),targetReturnPercent:targetReturnPercent?.toString()??null,durationDays,startsAt:input.startsAt.toISOString(),maturesAt:input.maturesAt.toISOString(),idempotencyKey,simulated:true}}});
     await createNotification(tx,{userId:user.id,type:NotificationType.SYSTEM,title:'Simulated investment initiated',message:`An administrator initiated the ${opportunity.title} simulated investment. ${status===InvestmentStatus.ACTIVE?'It is active now.':`It is scheduled to start ${input.startsAt.toISOString()}.`} The principal was reserved in the internal ledger.`,dedupeKey:`investment:${investment.id}:admin-initiated`,relatedEntity:'INVESTMENT',relatedId:investment.id,actionUrl:'/investments'});
     return {investment,replay:false};
-   },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+  },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:5_000,timeout:15_000});
    return NextResponse.json(jsonSafe(result.investment),{status:result.replay?200:201,headers:{'Cache-Control':'private, no-store'}});
   }
   const input=opportunitySchema.parse(body);
@@ -215,7 +215,7 @@ export async function PATCH(request:Request){
    const message=`Your ${current.accountMode} investment is ${statusText}. This is simulated activity; any payout is a virtual ledger result, not an external investment or return.`;
    await createNotification(tx,{userId:current.userId,type:NotificationType.SYSTEM,title:`Investment ${statusText}`,message,dedupeKey:`investment:${current.id}:${nextStatus}:${updated.updatedAt.toISOString()}`,relatedEntity:'INVESTMENT',relatedId:current.id,actionUrl:'/investments'});
    return updated;
-  },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+  },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:5_000,timeout:15_000});
   return NextResponse.json(jsonSafe(result),{headers:{'Cache-Control':'private, no-store'}});
  }catch(error){
   if(error instanceof ZodError)return NextResponse.json({error:'Invalid opportunity or investment action.'},{status:400});

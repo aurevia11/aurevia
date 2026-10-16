@@ -394,6 +394,7 @@ model Order {
   updatedAt DateTime @updatedAt
   executions Execution[]
   @@index([userId,status])
+  @@index([userId,instrumentId,accountMode,side,status])
   @@index([accountMode,providerName,providerStatus])
 }
 model Execution {
@@ -423,6 +424,7 @@ model Position {
   openedAt DateTime @default(now())
   closedAt DateTime?
   @@index([userId,status])
+  @@index([userId,instrumentId,accountMode,side,status])
 }
 model LedgerAccount {
   id String @id @default(cuid())
@@ -499,6 +501,7 @@ model FundingRequest {
   @@index([status,createdAt])
   @@index([userId,accountMode,createdAt])
   @@index([type,accountMode,status,createdAt])
+  @@index([userId,accountMode,currency,type,status])
 }
 model PaymentMethod {
   id String @id @default(cuid())
@@ -658,6 +661,7 @@ model InvestmentRequest {
   updatedAt DateTime @updatedAt
   @@index([userId,accountMode,status,requestedAt])
   @@index([opportunityId,status,requestedAt])
+  @@index([accountMode,status,maturesAt])
 }
 
 model PortfolioSnapshot {
