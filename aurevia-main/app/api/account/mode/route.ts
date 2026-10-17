@@ -4,7 +4,7 @@ import {AccountMode,NotificationType} from '@prisma/client';
 import {requireUser} from '@/lib/auth';
 import {db} from '@/lib/db';
 import {createNotification} from '@/lib/notifications';
-import {DEMO_STARTING_BALANCE,REAL_SIMULATED_STARTING_BALANCE,initializeDemoAccount,initializeRealSimulatedAccount} from '@/lib/ledger';
+import {DEMO_STARTING_BALANCE,initializeDemoAccount} from '@/lib/ledger';
 
 const schema=z.object({accountMode:z.nativeEnum(AccountMode)});
 
@@ -15,15 +15,12 @@ export async function PATCH(req:Request){
 		const updated=await db.$transaction(async tx=>{
 			const current=await tx.user.findUniqueOrThrow({where:{id:user.id},select:{accountMode:true}});
 			const demoAccountInitialized=accountMode===AccountMode.DEMO?await initializeDemoAccount(tx,user.id):false;
-			const realAccountInitialized=accountMode===AccountMode.REAL?await initializeRealSimulatedAccount(tx,user.id):false;
 			const changed=await tx.user.update({where:{id:user.id},data:{accountMode},select:{accountMode:true,updatedAt:true}});
-			if(current.accountMode!==accountMode||demoAccountInitialized||realAccountInitialized){
-				if(current.accountMode!==accountMode)await tx.auditLog.create({data:{actorId:user.id,action:'ACCOUNT_MODE_CHANGED',entity:'USER',entityId:user.id,metadata:{from:current.accountMode,to:accountMode}}});
-				const initialized=demoAccountInitialized||realAccountInitialized;
-				const startingBalance=demoAccountInitialized?DEMO_STARTING_BALANCE:REAL_SIMULATED_STARTING_BALANCE;
-				await createNotification(tx,{userId:user.id,type:NotificationType.ACCOUNT,title:initialized?`${accountMode} simulated account initialized`:'Account mode changed',message:initialized?`Your separate ${accountMode} account received ${startingBalance.toFixed(2)} virtual USD. No real funds were transferred.`:`Your active account is now ${accountMode}. Balances and activity remain separate by mode.`,dedupeKey:`account-mode:${user.id}:${changed.updatedAt.toISOString()}`,actionUrl:'/dashboard'});
+			if(current.accountMode!==accountMode||demoAccountInitialized){
+				await tx.auditLog.create({data:{actorId:user.id,action:current.accountMode===accountMode?'DEMO_ACCOUNT_INITIALIZED':'ACCOUNT_MODE_CHANGED',entity:current.accountMode===accountMode?'LEDGER_ACCOUNT':'USER',entityId:user.id,metadata:{from:current.accountMode,to:accountMode,demoAccountInitialized}}});
+				await createNotification(tx,{userId:user.id,type:NotificationType.ACCOUNT,title:demoAccountInitialized?'DEMO account initialized':'Account mode changed',message:demoAccountInitialized?`Your separate DEMO account received ${DEMO_STARTING_BALANCE.toFixed(2)} virtual USD. No REAL funds were transferred.`:`Your active account is now ${accountMode}. Balances and activity remain separate by mode.`,dedupeKey:`account-mode:${user.id}:${changed.updatedAt.toISOString()}`,actionUrl:'/dashboard'});
 			}
-			return {accountMode:changed.accountMode,demoAccountInitialized,realAccountInitialized};
+			return {accountMode:changed.accountMode,demoAccountInitialized};
 		});
 		return NextResponse.json(updated);
 	}catch{

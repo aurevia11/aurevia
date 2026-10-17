@@ -578,7 +578,7 @@ test('registration skips contact verification and platform health remains availa
 	await page.goto('/dashboard');
 	await expect(page.getByRole('heading',{name:'Hello, Edited'})).toBeVisible();
 	await expect(page.locator('.dashboard-real-state')).toBeVisible();
-	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5000);
+	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(0);
 	await selectAccountMode(page,'DEMO');
 	await page.goto('/dashboard');
 	await expect(page.getByRole('heading',{name:'Hello, Edited'})).toBeVisible();
@@ -695,7 +695,7 @@ test('account-mode changes refresh and isolate wallet, trade, history, and suppo
 	await page.unroute('**/api/account/mode');
 	await expect(mode).toHaveValue('REAL');
 	await expect(page.locator('.account-heading .account-kicker')).toContainText('REAL ACCOUNT');
-	await expect(page.locator('.wallet-balance-value')).toHaveText('5,000.00 USD');
+	await expect(page.locator('.wallet-balance-value')).toHaveText('0.00 USD');
 	await page.goto('/wallet/transactions');
 	await expect(page.locator('.account-heading .status-pill')).toContainText('REAL ACCOUNT');
 	await expect(page.getByText('No transactions yet')).toBeVisible();
@@ -730,7 +730,7 @@ test('REAL-interface simulated deposits and withdrawals require admin review and
 	expect((await page.request.get('/api/admin/providers/status')).status()).toBe(403);
 	expect((await page.request.post('/api/webhooks/broker/unconfigured',{data:{eventId:'synthetic-test-event'}})).status()).toBe(503);
 	await selectAccountMode(page,'REAL');
-	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5000);
+	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(0);
 	const previousGbpRate=await db.exchangeRate.findUnique({where:{baseCurrency_quoteCurrency:{baseCurrency:'USD',quoteCurrency:'GBP'}}});
 	try{
 		await db.exchangeRate.upsert({
@@ -743,7 +743,7 @@ test('REAL-interface simulated deposits and withdrawals require admin review and
 		expect(configuredRate).toMatchObject({rate:'0.8',source:'E2E configured rate',status:'CURRENT'});
 		await page.goto('/wallet');
 		await expect(page.getByText('Exchange rate: 1 USD = 0.8 GBP')).toBeVisible();
-		await expect(page.getByText(/Approximate display: £4,000\.00/)).toBeVisible();
+		await expect(page.getByText(/Approximate display: £0\.00/)).toBeVisible();
 	}finally{
 		await page.request.patch('/api/currency-preference',{data:{currency:'USD'}});
 		if(previousGbpRate)await db.exchangeRate.update({where:{baseCurrency_quoteCurrency:{baseCurrency:'USD',quoteCurrency:'GBP'}},data:{rate:previousGbpRate.rate,source:previousGbpRate.source,observedAt:previousGbpRate.observedAt}});
@@ -786,7 +786,7 @@ test('REAL-interface simulated deposits and withdrawals require admin review and
 		expect(fundingHistory.find((row:{id:string})=>row.id===fixture('REAL_WITHDRAWAL_ID'))).toMatchObject({status:'COMPLETED',accountMode:'REAL',settledAt:expect.any(String)});
 	}finally{await adminContext.close();}
 
-	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5175);
+	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(175);
 	const withdrawal=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'WITHDRAWAL',amount:10,currency:'USD'}});
 	expect(withdrawal.status()).toBe(201);
 	expect((await withdrawal.json()).method).toBe('Internal simulated withdrawal');
@@ -799,7 +799,21 @@ test('REAL-interface simulated deposits and withdrawals require admin review and
 		expect(approval.status()).toBe(200);
 		expect((await page.request.get('/api/wallet').then(response=>response.json())).transactions.find((item:{id:string})=>item.id===submitted.id)).toMatchObject({status:'COMPLETED',settlementReference:`SIMULATED-WITHDRAWAL:${submitted.id}`});
 	}finally{await withdrawalAdminContext.close();}
-	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5165);
+	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(165);
+	const fundedInstrument=(await page.request.get('/api/market').then(response=>response.json())).find((item:{price:number})=>Number(item.price)<100);
+	expect(fundedInstrument,'approved REAL deposits should provide enough funds for a simulated trade').toBeTruthy();
+	if(!fundedInstrument)throw new Error('No affordable instrument is available after the simulated REAL deposits.');
+	const fundedBuy=await page.request.post('/api/orders',{headers:{'Idempotency-Key':randomUUID()},data:{instrumentId:fundedInstrument.id,side:'BUY',type:'MARKET',quantity:1,expectedPrice:Number(fundedInstrument.price),observedAt:fundedInstrument.lastUpdatedAt||fundedInstrument.updatedAt}});
+	expect(fundedBuy.status()).toBe(201);
+	expect((await fundedBuy.json()).status).toBe('FILLED');
+	const fundedBalanceAfterBuy=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
+	expect(fundedBalanceAfterBuy).toBeLessThan(165);
+	const fundedSaleQuote=(await page.request.get('/api/market').then(response=>response.json())).find((item:{id:string})=>item.id===fundedInstrument.id);
+	if(!fundedSaleQuote)throw new Error('The funded REAL-mode test instrument is no longer available.');
+	const fundedSell=await page.request.post('/api/orders',{headers:{'Idempotency-Key':randomUUID()},data:{instrumentId:fundedInstrument.id,side:'SELL',type:'MARKET',quantity:1,expectedPrice:Number(fundedSaleQuote.price),observedAt:fundedSaleQuote.lastUpdatedAt||fundedSaleQuote.updatedAt}});
+	expect(fundedSell.status()).toBe(201);
+	expect((await fundedSell.json()).status).toBe('FILLED');
+	expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBeGreaterThan(fundedBalanceAfterBuy);
 	await selectAccountMode(page,'DEMO');
 	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5000);
 });
@@ -1006,7 +1020,7 @@ test('simulated BTC conversion is ledger-backed, idempotent, and isolated from R
 		}
 	}
 	await selectAccountMode(page,'REAL');
-	expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5000);
+	expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(0);
 	await selectAccountMode(page,'DEMO');
 	expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(Number(afterSale.balance));
 	const notifications=await page.request.get('/api/notifications?limit=100').then(response=>response.json());
@@ -1107,6 +1121,8 @@ test('simulated investment lifecycle and trading work in both account modes',asy
 
 		await selectAccountMode(page,'REAL');
 		const initialRealBalance=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
+		expect(initialRealBalance).toBeGreaterThan(0);
+		expect(initialRealBalance).toBeLessThanOrEqual(175);
 		const investorId=await page.request.get('/api/profile').then(response=>response.json().then(profile=>profile.id));
 		const realAllocation=await adminPage.request.post('/api/admin/balances',{data:{userId:investorId,accountMode:'REAL',currency:'USD',amount:'1000.00',direction:'CREDIT',category:'ADMIN_ALLOCATION',reason:'Simulated REAL-mode investment and trading test allocation',idempotencyKey:randomUUID()}});
 		expect(realAllocation.status()).toBe(201);

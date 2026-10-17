@@ -2,7 +2,7 @@ import {NextResponse} from 'next/server';
 import {AccountMode,InvestmentStatus,Prisma} from '@prisma/client';
 import {requireUser} from '@/lib/auth';
 import {db} from '@/lib/db';
-import {balance,initializeRealSimulatedAccount} from '@/lib/ledger';
+import {balance} from '@/lib/ledger';
 import {getUserActivity} from '@/lib/activity';
 import {getAccountTier} from '@/lib/production-policy';
 import {jsonSafe} from '@/lib/serializers';
@@ -26,7 +26,6 @@ export async function GET(){
   try{
     const user=await requireUser();
     const mode=user.accountMode as AccountMode;
-    if(mode===AccountMode.REAL)await db.$transaction(tx=>initializeRealSimulatedAccount(tx,user.id));
     const [account,positions,orders,investments,notifications,profile,kyc,verificationDocuments,marketInstruments]=await Promise.all([
       optionalData('ledger account',()=>db.ledgerAccount.findUnique({where:{code:`USER:${user.id}:${mode}:USD`},select:{id:true}}),null),
       optionalData('positions',()=>db.position.findMany({where:{userId:user.id,accountMode:mode,status:'OPEN'},include:{instrument:true},orderBy:{openedAt:'desc'},take:8}),[]),

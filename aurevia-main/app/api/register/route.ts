@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 import {AccountMode,Prisma} from '@prisma/client';
 import {z,ZodError} from 'zod';
 import {db} from '@/lib/db';
-import {ensureSystemAccount,initializeDemoAccount,initializeRealSimulatedAccount} from '@/lib/ledger';
+import {ensureSystemAccount,ensureUserLedger,initializeDemoAccount} from '@/lib/ledger';
 import {rateLimit} from '@/lib/rate-limit';
 import {NotificationType} from '@prisma/client';
 import {createNotification} from '@/lib/notifications';
@@ -44,7 +44,7 @@ export async function POST(req:Request){
 			await tx.kycProfile.upsert({where:{userId:created.id},update:{dob:dateOfBirth},create:{userId:created.id,dob:dateOfBirth}});
 			stage='initialize-account-ledger';
 			if(created.accountMode===AccountMode.DEMO)await initializeDemoAccount(tx,created.id);
-			else await initializeRealSimulatedAccount(tx,created.id);
+			else await ensureUserLedger(tx,created.id,created.accountMode);
 			stage='initialize-system-account';
 			await ensureSystemAccount(tx,'SYSTEM:LIABILITY','Customer Funds');
 			stage='create-user-notification';

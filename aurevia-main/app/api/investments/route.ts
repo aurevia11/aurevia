@@ -3,7 +3,7 @@ import {AccountMode,InvestmentOpportunityStatus,InvestmentStatus,NotificationTyp
 import {z,ZodError} from 'zod';
 import {requireUser} from '@/lib/auth';
 import {db} from '@/lib/db';
-import {balance,ensureSystemAccount,ensureUserLedger,initializeRealSimulatedAccount,postDoubleEntry,reservedWithdrawalAmount} from '@/lib/ledger';
+import {balance,ensureSystemAccount,ensureUserLedger,postDoubleEntry,reservedWithdrawalAmount} from '@/lib/ledger';
 import {createNotification,notifyActiveAdmins} from '@/lib/notifications';
 import {jsonSafe} from '@/lib/serializers';
 
@@ -19,7 +19,6 @@ function sameRequest(existing:{userId:string;opportunityId:string;accountMode:Ac
 export async function GET(){
  try{
   const user=await requireUser();
-  if(user.accountMode===AccountMode.REAL)await db.$transaction(tx=>initializeRealSimulatedAccount(tx,user.id));
   const modeFilter=user.accountMode===AccountMode.DEMO?{demoEligible:true}:{realEligible:true};
   const [opportunities,requests,account]=await Promise.all([
    db.investmentOpportunity.findMany({where:{status:InvestmentOpportunityStatus.AVAILABLE,...modeFilter},orderBy:{createdAt:'desc'}}),
@@ -41,7 +40,6 @@ export async function POST(request:Request){
   const idempotencyKey=request.headers.get('Idempotency-Key')||'';
   if(!requestKeyPattern.test(idempotencyKey))return NextResponse.json({error:'A valid idempotency key is required.'},{status:400});
   const submit=()=>db.$transaction(async tx=>{
-   if(user.accountMode===AccountMode.REAL)await initializeRealSimulatedAccount(tx,user.id);
    const prior=await tx.investmentRequest.findUnique({where:{idempotencyKey}});
    if(prior){
     if(!sameRequest(prior,user.id,input.opportunityId,user.accountMode,input.amount))throw new Error('IDEMPOTENCY_KEY_REUSED');
