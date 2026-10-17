@@ -3,7 +3,7 @@ import {AccountMode,InvestmentOpportunityStatus,InvestmentStatus,NotificationTyp
 import {z,ZodError} from 'zod';
 import {requireUser} from '@/lib/auth';
 import {db} from '@/lib/db';
-import {balance,ensureSystemAccount,ensureUserLedger,postDoubleEntry,reservedWithdrawalAmount} from '@/lib/ledger';
+import {balance,ensureSystemAccount,ensureUserLedger,postDoubleEntry,reservedWithdrawalAmount,roundUsdAmount} from '@/lib/ledger';
 import {createNotification,notifyActiveAdmins} from '@/lib/notifications';
 import {jsonSafe} from '@/lib/serializers';
 
@@ -37,19 +37,21 @@ export async function POST(request:Request){
  try{
   const user=await requireUser();
   const input=requestSchema.parse(await request.json());
+  const requestedAmount=roundUsdAmount(input.amount);
+  if(requestedAmount.lte(0))throw new Error('INVALID_AMOUNT');
   const idempotencyKey=request.headers.get('Idempotency-Key')||'';
   if(!requestKeyPattern.test(idempotencyKey))return NextResponse.json({error:'A valid idempotency key is required.'},{status:400});
   const submit=()=>db.$transaction(async tx=>{
    const prior=await tx.investmentRequest.findUnique({where:{idempotencyKey}});
    if(prior){
-    if(!sameRequest(prior,user.id,input.opportunityId,user.accountMode,input.amount))throw new Error('IDEMPOTENCY_KEY_REUSED');
+    if(!sameRequest(prior,user.id,input.opportunityId,user.accountMode,requestedAmount.toNumber()))throw new Error('IDEMPOTENCY_KEY_REUSED');
     return {investment:prior,replay:true};
    }
    const opportunity=await tx.investmentOpportunity.findUnique({where:{id:input.opportunityId}});
    if(!opportunity||opportunity.status!==InvestmentOpportunityStatus.AVAILABLE)throw new Error('INVESTMENT_UNAVAILABLE');
    if(user.accountMode===AccountMode.DEMO&&!opportunity.demoEligible)throw new Error('INVESTMENT_MODE_UNAVAILABLE');
    if(user.accountMode===AccountMode.REAL&&!opportunity.realEligible)throw new Error('INVESTMENT_MODE_UNAVAILABLE');
-   const amount=new Prisma.Decimal(input.amount);
+   const amount=requestedAmount;
    if(amount.lt(opportunity.minimumAmount)||(opportunity.maximumAmount&&amount.gt(opportunity.maximumAmount)))throw new Error('INVESTMENT_AMOUNT_OUT_OF_RANGE');
     const now=new Date();
     const activatedAt=opportunity.startsAt&&opportunity.startsAt>now?opportunity.startsAt:now;
@@ -85,7 +87,7 @@ export async function POST(request:Request){
   if(error instanceof ZodError)return NextResponse.json({error:'Enter an amount within the opportunity limits.'},{status:400});
   if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
   if(error instanceof Error&&['IDEMPOTENCY_KEY_REUSED','INVESTMENT_UNAVAILABLE','INVESTMENT_MODE_UNAVAILABLE','INVESTMENT_MATURED'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:409});
-  if(error instanceof Error&&['INVESTMENT_AMOUNT_OUT_OF_RANGE','INSUFFICIENT_SIMULATED_BALANCE'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:400});
+  if(error instanceof Error&&['INVESTMENT_AMOUNT_OUT_OF_RANGE','INSUFFICIENT_SIMULATED_BALANCE','INVALID_AMOUNT'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:400});
   if(error&&typeof error==='object'&&'code'in error&&String(error.code)==='P2002')return NextResponse.json({error:'This investment request was already received.'},{status:409});
   const code=error&&typeof error==='object'&&'code'in error?String(error.code):'';
   console.error(`Investment submission failed (${/^[A-Z0-9_]{2,32}$/.test(code)?code:error instanceof Error?error.name:'UnknownError'}).`);

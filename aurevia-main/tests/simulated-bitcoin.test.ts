@@ -16,8 +16,8 @@ describe('simulated Bitcoin conversion arithmetic',()=>{
 	it('credits sale proceeds net of the configured fee',()=>{
 		const result=calculateSimulatedBitcoinConversion('SELL',new D('0.001'),new D('92500'),new D('0.0015'));
 		expect(result.grossUsd.toFixed(2)).toBe('92.50');
-		expect(result.fee.toFixed(5)).toBe('0.13875');
-		expect(result.netUsd.toFixed(5)).toBe('92.36125');
+		expect(result.fee.toFixed(2)).toBe('0.14');
+		expect(result.netUsd.toFixed(2)).toBe('92.36');
 		expect(result.bitcoinAmount.toFixed(3)).toBe('0.001');
 	});
 
@@ -26,6 +26,13 @@ describe('simulated Bitcoin conversion arithmetic',()=>{
 		expect(sale.netUsd.plus(sale.fee).eq(sale.grossUsd)).toBe(true);
 		const purchase=calculateSimulatedBitcoinConversion('BUY',new D('100.0000000000'),new D('65085.123456789'),new D('0.0015'));
 		expect(purchase.grossUsd.plus(purchase.fee).eq(purchase.netUsd)).toBe(true);
+	});
+
+	it('rounds the simulated USD amount to cents while retaining BTC precision',()=>{
+		const result=calculateSimulatedBitcoinConversion('BUY',new D('100.019'),new D('65085.123456789'),new D('0.0015'));
+		expect(result.netUsd.toFixed(2)).toBe('100.02');
+		expect(result.fee.toFixed(2)).toBe('0.15');
+		expect(result.bitcoinAmount.toFixed(10)).toBe('0.0015344520');
 	});
 
 	it.each([

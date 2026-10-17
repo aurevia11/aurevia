@@ -25,5 +25,5 @@ export function validateInvestmentSettlement(payout:number|undefined){
 
 export function simulatedInvestmentPayout(principal:Prisma.Decimal,targetReturnPercent:Prisma.Decimal|null){
  const target=targetReturnPercent??new Prisma.Decimal(0);
- return principal.mul(new Prisma.Decimal(100).plus(target)).div(100).toDecimalPlaces(10,Prisma.Decimal.ROUND_HALF_UP);
+ return principal.mul(new Prisma.Decimal(100).plus(target)).div(100).toDecimalPlaces(2,Prisma.Decimal.ROUND_HALF_UP);
 }

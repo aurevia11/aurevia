@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {db} from './db';
-import {balance,ensureSystemAccount,ensureUserLedger,postDoubleEntry} from './ledger';
+import {balance,ensureSystemAccount,ensureUserLedger,postDoubleEntry,roundUsdAmount} from './ledger';
 import {AccountMode,NotificationType,OrderSide,OrderStatus,OrderType,Prisma} from '@prisma/client';
 import {createNotification} from '@/lib/notifications';
 import {assertFreshQuote,assertSellableQuantity,averageEntryPrice,realizedSpotPnl} from '@/lib/trading-policy';
@@ -23,8 +23,8 @@ export async function executeOrderTx(tx:Prisma.TransactionClient,orderId:string,
  const quantity=order.quantity.minus(order.filledQuantity); if(quantity.lte(0))throw new Error('ORDER_FILLED');
  const fillPrice=new Prisma.Decimal(fill);
  if(fillPrice.lte(0))throw new Error('INVALID_PRICE');
- const notional=fillPrice.mul(quantity);
- const fee=notional.mul(order.instrument.takerFee);
+ const notional=roundUsdAmount(fillPrice.mul(quantity));
+ const fee=roundUsdAmount(notional.mul(order.instrument.takerFee));
  const userAcct=await ensureUserLedger(tx,order.userId,order.accountMode);
  const fees=await ensureSystemAccount(tx,`SYSTEM:${order.accountMode}:FEES`,'Simulated trading fees','USD',order.accountMode);
  const clearing=await ensureSystemAccount(tx,`SYSTEM:${order.accountMode}:CLEARING`,'Simulated spot clearing','USD',order.accountMode);
@@ -73,8 +73,8 @@ export async function closeSimulatedPositionTx(tx:Prisma.TransactionClient,userI
  let fee=new Prisma.Decimal(0);
  if(position.side===OrderSide.BUY){
   const quantity=position.quantity;
-  const proceeds=price.mul(quantity);
-  fee=proceeds.mul(position.instrument.takerFee);
+  const proceeds=roundUsdAmount(price.mul(quantity));
+  fee=roundUsdAmount(proceeds.mul(position.instrument.takerFee));
   const clearing=await ensureSystemAccount(tx,`SYSTEM:${position.accountMode}:CLEARING`,'Simulated spot clearing','USD',position.accountMode);
   const fees=await ensureSystemAccount(tx,`SYSTEM:${position.accountMode}:FEES`,'Simulated trading fees','USD',position.accountMode);
   await postDoubleEntry(tx,{reference:`${position.accountMode}:POSITION_CLOSE:${position.id}`,description:`Simulated sale of ${position.instrument.symbol}`,debitAccountId:clearing.id,creditAccountId:userAccount.id,amount:proceeds});

@@ -120,6 +120,8 @@ export default function WalletExperience(){
 	const currentDisplayRate=currencyRate?.status==='CURRENT'&&currencyRate.rate!==null&&Number.isFinite(Number(currencyRate.rate))&&Number(currencyRate.rate)>0?Number(currencyRate.rate):null;
 	const realKycApproved=profile?.kycStatus==='APPROVED'&&profile.documents>0&&profile.verificationProfileSubmitted;
 	const realWithdrawalBlocked=data.accountMode==='REAL'&&!!profile&&(!profile.withdrawalEnabled||profile.accountRestricted);
+	const requiresBitcoinDepositAddress=data.accountMode==='REAL'&&type==='DEPOSIT';
+	const bitcoinDepositReady=!!simulatedBitcoinAddress&&bitcoinAddressAcknowledged;
 
 	const load=useCallback(async(showLoading=false)=>{
 		if(showLoading)setLoading(true);
@@ -227,6 +229,7 @@ export default function WalletExperience(){
 	async function submit(event:FormEvent<HTMLFormElement>){
 		event.preventDefault();
 		if(!selectedMethod&&!manualRealFunding)return;
+		if(requiresBitcoinDepositAddress&&!simulatedBitcoinAddress){setError('A simulated Bitcoin address has not been configured. Contact an administrator before requesting a REAL deposit.');return;}
 		if(type==='DEPOSIT'&&simulatedBitcoinAddress&&!bitcoinAddressAcknowledged){setError('Copy or scan the simulated Bitcoin address and confirm before submitting this deposit.');return;}
 		if(type==='DEPOSIT'&&selectedMethod&&!proofFile){setError(translate('paymentScreenshotRequired'));return;}
 		const minimumAmount=selectedMethod&&selectedMethod.minimumAmount!==null&&selectedMethod.minimumAmount!==undefined?Number(selectedMethod.minimumAmount):0.01;
@@ -239,6 +242,7 @@ export default function WalletExperience(){
 
 	async function confirmSubmit(){
 		if((!selectedMethod&&!manualRealFunding)||submitting)return;
+		if(requiresBitcoinDepositAddress&&!simulatedBitcoinAddress){setError('A simulated Bitcoin address has not been configured. Contact an administrator before requesting a REAL deposit.');return;}
 		if(type==='DEPOSIT'&&simulatedBitcoinAddress&&!bitcoinAddressAcknowledged){setError('Copy or scan the simulated Bitcoin address and confirm before submitting this deposit.');return;}
 		if(type==='DEPOSIT'&&selectedMethod&&!proofFile){setError(translate('paymentScreenshotRequired'));return;}
 		setSubmitting(true);setError('');
@@ -345,9 +349,13 @@ export default function WalletExperience(){
 				<div className="wallet-type-switch" role="group" aria-label={translate('fundingRequestType')}><button type="button" aria-pressed={type==='DEPOSIT'} onClick={()=>{setType('DEPOSIT');setBitcoinAddressAcknowledged(false);setConfirming(false)}}><ArrowDownLeft size={15}/> {translate('deposit')}</button><button type="button" aria-pressed={type==='WITHDRAWAL'} onClick={()=>{setType('WITHDRAWAL');setBitcoinAddressAcknowledged(false);setConfirming(false)}}><ArrowUpRight size={15}/> {translate('withdrawal')}</button></div>
 				<form onSubmit={submit} className="mt-4 space-y-4">
 					{manualRealFunding&&<div className="account-callout" role="status"><span>Requests are recorded in the {data.accountMode} ledger. No payment evidence or external destination is required.</span></div>}
-					{type==='DEPOSIT'&&simulatedBitcoinAddress&&<div className="account-panel grid gap-3 border border-gold/30 p-4" aria-label="Simulated Bitcoin address">
-						<div><h3 className="font-semibold">Simulated Bitcoin address display</h3><p className="mt-1 text-sm text-amber-100">Display and QR practice only. Do not send Bitcoin to this address. This platform does not monitor the Bitcoin network or credit real transfers.</p></div>
-						<code className="block break-all rounded-lg bg-black/20 p-3 text-sm">{simulatedBitcoinAddress}</code>
+					{requiresBitcoinDepositAddress&&<label className="account-label">Payment method<select className="input" value="BTC" disabled aria-label="REAL account deposit method"><option value="BTC">BTC · simulated administrator review</option></select></label>}
+					{type==='DEPOSIT'&&(simulatedBitcoinAddress||requiresBitcoinDepositAddress)&&<div className="account-panel grid gap-3 border border-gold/30 p-4" aria-label="Simulated Bitcoin address">
+						<div><h3 className="font-semibold">{requiresBitcoinDepositAddress?'REAL account BTC deposit address':'Simulated Bitcoin address display'}</h3><p className="mt-1 text-sm text-amber-100">Display and QR practice only. Do not send Bitcoin to this address. This platform does not monitor the Bitcoin network or credit real transfers.</p></div>
+						<label className="account-label">BTC address<input className="input font-mono" type="text" required={requiresBitcoinDepositAddress} readOnly value={simulatedBitcoinAddress} placeholder="bc1q... or wallet address + network" aria-describedby="simulated-bitcoin-address-note"/></label>
+						{!simulatedBitcoinAddress&&requiresBitcoinDepositAddress&&<p id="simulated-bitcoin-address-note" className="text-sm text-amber-100" role="status">No simulated BTC display address is configured. REAL deposits are unavailable until an administrator configures one.</p>}
+						{simulatedBitcoinAddress&&<code id="simulated-bitcoin-address-note" className="block break-all rounded-lg bg-black/20 p-3 text-sm">{simulatedBitcoinAddress}</code>}
+						{simulatedBitcoinAddress&&<>
 						<div className="flex flex-wrap items-center gap-3">
 							{bitcoinQr?<Image src={bitcoinQr} alt="QR code for the simulated Bitcoin address" width={160} height={160} unoptimized className="rounded bg-white p-2"/>:<p className="text-xs muted" role={bitcoinQrError?'alert':'status'}>{bitcoinQrError||'Preparing address QR code…'}</p>}
 							<div className="grid gap-2">
@@ -356,6 +364,7 @@ export default function WalletExperience(){
 								{bitcoinAddressAcknowledged&&<span className="text-xs text-profit" role="status">Address acknowledged for this simulated request.</span>}
 							</div>
 						</div>
+						</>}
 					</div>}
 					{(selectedMethod||manualRealFunding)&&<>
 						<label className="account-label">{translate('currency')}<select className="input" required value={currency} onChange={event=>setCurrency(event.target.value)}>{supportedCurrencies.map(item=><option key={item} value={item}>{item}</option>)}</select></label>
@@ -369,8 +378,8 @@ export default function WalletExperience(){
 						<label className="account-label">{translate('note')}<textarea className="input min-h-20" maxLength={500} value={note} onChange={event=>setNote(event.target.value)}/></label>
 					</>}
 					{!availableMethods.length&&!manualRealFunding&&<div className="account-empty" role="status">{methodLoadError||translate('noDepositMethods',{type:type.toLowerCase()})}</div>}
-					{confirming&&(selectedMethod||manualRealFunding)&&<div className="account-confirm-panel" role="alert"><h3>{translate('confirmRequest',{type:type.toLowerCase()})}</h3><p>{money(Number(amount||0),currency)} via {selectedMethod?.name||(manualRealFunding?'Simulated internal administrator review':'Manual administrator review')} in the {data.accountMode} account. This records a request for review and the ledger is posted only after approval.</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" className="btn bg-gold text-black" disabled={submitting||type==='DEPOSIT'&&!!simulatedBitcoinAddress&&!bitcoinAddressAcknowledged} onClick={()=>void confirmSubmit()}>{submitting?translate('submitRequestStatus'):translate('confirmRequestButton')}</button><button type="button" className="btn bg-white/5" onClick={()=>setConfirming(false)}>{translate('cancelRequestButton')}</button></div></div>}
-					{!confirming&&<button className="btn w-full bg-gold text-black" type="submit" disabled={loading||!hasWalletData||(type==='DEPOSIT'&&(!profile?.depositEnabled||!!profileLoadError||!!simulatedBitcoinAddress&&!bitcoinAddressAcknowledged))||(type==='WITHDRAWAL'&&(realWithdrawalBlocked||!profile?.withdrawalEnabled||profile.accountRestricted||availableBalance===null))}>{type==='DEPOSIT'?'Submit simulated deposit request':'Submit simulated withdrawal request'}</button>}
+					{confirming&&(selectedMethod||manualRealFunding)&&<div className="account-confirm-panel" role="alert"><h3>{translate('confirmRequest',{type:type.toLowerCase()})}</h3><p>{money(Number(amount||0),currency)} via {requiresBitcoinDepositAddress?'BTC simulated address and administrator review':selectedMethod?.name||(manualRealFunding?'Simulated internal administrator review':'Manual administrator review')} in the {data.accountMode} account. This records a request for review and the ledger is posted only after approval.</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" className="btn bg-gold text-black" disabled={submitting||type==='DEPOSIT'&&!!simulatedBitcoinAddress&&!bitcoinAddressAcknowledged||requiresBitcoinDepositAddress&&!bitcoinDepositReady} onClick={()=>void confirmSubmit()}>{submitting?translate('submitRequestStatus'):translate('confirmRequestButton')}</button><button type="button" className="btn bg-white/5" onClick={()=>setConfirming(false)}>{translate('cancelRequestButton')}</button></div></div>}
+					{!confirming&&<button className="btn w-full bg-gold text-black" type="submit" disabled={loading||!hasWalletData||(type==='DEPOSIT'&&(!profile?.depositEnabled||!!profileLoadError||!!simulatedBitcoinAddress&&!bitcoinAddressAcknowledged||requiresBitcoinDepositAddress&&!bitcoinDepositReady))||(type==='WITHDRAWAL'&&(realWithdrawalBlocked||!profile?.withdrawalEnabled||profile.accountRestricted||availableBalance===null))}>{type==='DEPOSIT'?'Submit simulated deposit request':'Submit simulated withdrawal request'}</button>}
 				</form>
 				</>
 			</section>

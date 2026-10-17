@@ -1073,8 +1073,12 @@ test('administrative balance adjustments require authorization and confirmation 
 test('simulated investment lifecycle and trading work in both account modes',async({browser,page})=>{
 	const adminContext=await browser.newContext();
 	const adminPage=await adminContext.newPage();
+	const priorBitcoinAddress=await db.systemSetting.findUnique({where:{key:SIMULATED_BTC_ADDRESS_SETTING},select:{value:true}});
 	try{
 		await loginAs(adminPage,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
+		const btcAddress='bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh';
+		const clearedBitcoinAddress=await adminPage.request.put('/api/admin/settings',{data:{key:SIMULATED_BTC_ADDRESS_SETTING,value:''}});
+		expect(clearedBitcoinAddress.status()).toBe(200);
 		const opportunityResponse=await adminPage.request.post('/api/admin/investments',{data:{title:'E2E simulated opportunity',category:'Test allocation',description:'Disposable investment terms for isolated Playwright coverage.',assetSymbol:null,minimumAmount:100,maximumAmount:10000,targetReturnPercent:8,durationDays:30,startsAt:null,maturesAt:null,riskLevel:'MODERATE',status:'AVAILABLE',demoEligible:true,realEligible:true,requiresApproval:true,targetPrice:null,stopPrice:null}});
 		expect(opportunityResponse.status()).toBe(201);
 		const opportunity=await opportunityResponse.json();
@@ -1138,13 +1142,20 @@ test('simulated investment lifecycle and trading work in both account modes',asy
 			expect(blockedFunding.status()).toBe(400);
 			expect((await blockedFunding.json()).error).toContain('External payment methods are disabled');
 			expect(await page.request.get('/api/wallet').then(async response=>(await response.json()).transactions.length)).toBe(existingFunding.transactions.length);
-			const manualRequestResponse=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'DEPOSIT',amount:10,currency:'USD',transactionReference:`MANUAL-${randomUUID()}`}});
+			const missingBitcoinAddress=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'DEPOSIT',amount:10,currency:'USD'}});
+			expect(missingBitcoinAddress.status()).toBe(503);
+			expect((await missingBitcoinAddress.json()).error).toContain('Bitcoin display address is not configured');
+			const configuredBitcoinAddress=await adminPage.request.put('/api/admin/settings',{data:{key:SIMULATED_BTC_ADDRESS_SETTING,value:btcAddress}});
+			expect(configuredBitcoinAddress.status()).toBe(200);
+			const manualRequestResponse=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'DEPOSIT',amount:10,currency:'USD',transactionReference:`MANUAL-${randomUUID()}`,simulatedBitcoinAddress:btcAddress,simulatedBitcoinAddressAcknowledged:true}});
 			expect(manualRequestResponse.status()).toBe(201);
 			const manualRequest=await manualRequestResponse.json();
 			expect(manualRequest).toMatchObject({method:'Internal simulated deposit',paymentMethodId:null,status:'PENDING_REVIEW',accountMode:'REAL',hasReceipt:false});
 			await page.goto('/wallet');
 			await expect(page.getByText(/Internal simulated funding/i)).toBeVisible();
 			await expect(page.getByLabel('Amount',{exact:true})).toBeVisible();
+			await expect(page.getByLabel('REAL account deposit method')).toHaveValue('BTC');
+			await expect(page.getByLabel('BTC address')).toHaveValue(btcAddress);
 			await expect(page.locator('.transaction-method').filter({hasText:'Internal simulated deposit'})).toBeVisible();
 		await page.goto('/investments');
 		await expect(page.getByText(/REAL investment activity is simulated/i)).toBeVisible();
@@ -1195,7 +1206,12 @@ test('simulated investment lifecycle and trading work in both account modes',asy
 		await selectAccountMode(page,'REAL');
 			await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(finalRealBalance);
 		await expectNoHorizontalOverflow(page);
-	}finally{await adminContext.close();}
+	}finally{
+		if(adminPage.isClosed()===false){
+			await adminPage.request.put('/api/admin/settings',{data:{key:SIMULATED_BTC_ADDRESS_SETTING,value:priorBitcoinAddress?.value||''}}).catch(()=>undefined);
+		}
+		await adminContext.close();
+	}
 });
 
 test('admin investment initiation reserves once, honors withdrawal reservations, and activates on schedule',async({browser,page})=>{
@@ -1440,9 +1456,10 @@ test('administrator user and KYC actions persist and report protected actions',a
 	const investor=users.find((item:{email:string})=>item.email===fixture('INVESTOR_EMAIL'));
 	expect(user).toBeTruthy();
 	expect(investor).toBeTruthy();
+	expect(users.some((item:{role:string})=>item.role==='ADMIN')).toBe(false);
 	await db.user.update({where:{id:investor.id},data:{requiresRegistrationVerification:true,verifiedAt:null}});
-	const self=users.find((item:{email:string})=>item.email===fixture('ADMIN_EMAIL'));
-	const selfDemotion=await page.request.patch('/api/admin/users',{data:{userId:self.id,role:'USER'}});
+	const selfId=await page.request.get('/api/auth/session').then(response=>response.json().then(session=>session.user.id as string));
+	const selfDemotion=await page.request.patch('/api/admin/users',{data:{userId:selfId,role:'USER'}});
 	expect(selfDemotion.status()).toBe(409);
 	expect((await selfDemotion.json()).error).toContain('cannot freeze or demote your own');
 	const frozen=await page.request.patch('/api/admin/users',{data:{userId:user.id,status:'FROZEN'}});
@@ -1514,6 +1531,17 @@ test('administrator user and KYC actions persist and report protected actions',a
 	await expect(page.getByText(fixture('INVESTOR_EMAIL'),{exact:true})).toBeVisible();
 	await page.getByText(fixture('INVESTOR_EMAIL'),{exact:true}).click();
 	await expect(page.getByText(fixture('ADMIN_EMAIL'),{exact:false})).toBeVisible();
+	const softDelete=await page.request.patch('/api/admin/users',{data:{userId:user.id,status:'DELETED'}});
+	expect(softDelete.ok()).toBeTruthy();
+	expect((await softDelete.json()).status).toBe('DELETED');
+	expect((await page.request.get('/api/admin/users').then(response=>response.json())).some((item:{id:string})=>item.id===user.id)).toBe(false);
+	expect((await page.request.get('/api/admin/users?showDeleted=true').then(response=>response.json())).some((item:{id:string;status:string})=>item.id===user.id&&item.status==='DELETED')).toBe(true);
+	await page.goto('/admin/users');
+	await page.getByLabel('Show deleted accounts').check();
+	const deletedUserRow=page.locator('article').filter({hasText:fixture('USER_EMAIL')}).first();
+	await expect(deletedUserRow.getByRole('button',{name:'Restore'})).toBeVisible();
+	await deletedUserRow.getByRole('button',{name:'Restore'}).click();
+	await expect.poll(async()=>db.user.findUniqueOrThrow({where:{id:user.id},select:{status:true}}).then(account=>account.status)).toBe('ACTIVE');
 });
 
 test('Nova activity is redacted and visible only to administrators',async({page})=>{
@@ -1787,20 +1815,35 @@ test('administrator market tick is protected, deterministic, and idempotent',asy
 	}finally{await adminContext.close();}
 });
 
-test('wallet simulated REAL deposit request is internal and does not require payment proof',async({page})=>{
-	await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
-	await selectAccountMode(page,'REAL');
-	await page.goto('/wallet');
-	await expect(page.getByText(/Internal simulated funding/i)).toBeVisible();
-	await page.getByLabel('Amount',{exact:true}).fill('35');
-	await page.getByRole('button',{name:'Submit simulated deposit request'}).click();
-	await expect(page.getByRole('heading',{name:'Confirm deposit request'})).toBeVisible();
-	await page.getByRole('button',{name:'Confirm request'}).click();
-	await expect(page.getByRole('status').filter({hasText:'submitted for administrator review'})).toBeVisible();
-	await expect(page.getByRole('article',{name:'Deposit pending receipt'})).toBeVisible();
-	await expect(page.getByRole('article',{name:'Deposit pending receipt'}).getByText(/SIMULATED INTERNAL LEDGER RECORD/)).toBeVisible();
-	const wallet=await page.request.get('/api/wallet').then(response=>response.json());
-	expect(wallet.transactions[0]).toMatchObject({type:'DEPOSIT',status:'PENDING_REVIEW',hasReceipt:false,method:'Internal simulated deposit'});
+test('wallet simulated REAL deposit request requires the configured BTC display address but no payment proof',async({browser,page})=>{
+	const adminContext=await browser.newContext();
+	const adminPage=await adminContext.newPage();
+	const priorBitcoinAddress=await db.systemSetting.findUnique({where:{key:SIMULATED_BTC_ADDRESS_SETTING},select:{value:true}});
+	const btcAddress='bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh';
+	try{
+		await loginAs(adminPage,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
+		const configured=await adminPage.request.put('/api/admin/settings',{data:{key:SIMULATED_BTC_ADDRESS_SETTING,value:btcAddress}});
+		expect(configured.status()).toBe(200);
+		await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
+		await selectAccountMode(page,'REAL');
+		await page.goto('/wallet');
+		await expect(page.getByText(/Internal simulated funding/i)).toBeVisible();
+		await expect(page.getByLabel('REAL account deposit method')).toHaveValue('BTC');
+		await expect(page.getByLabel('BTC address')).toHaveValue(btcAddress);
+		await page.getByLabel('Amount',{exact:true}).fill('35');
+		await page.getByRole('button',{name:'I scanned or copied this address'}).click();
+		await page.getByRole('button',{name:'Submit simulated deposit request'}).click();
+		await expect(page.getByRole('heading',{name:'Confirm deposit request'})).toBeVisible();
+		await page.getByRole('button',{name:'Confirm request'}).click();
+		await expect(page.getByRole('status').filter({hasText:'submitted for administrator review'})).toBeVisible();
+		await expect(page.getByRole('article',{name:'Deposit pending receipt'})).toBeVisible();
+		await expect(page.getByRole('article',{name:'Deposit pending receipt'}).getByText(/SIMULATED INTERNAL LEDGER RECORD/)).toBeVisible();
+		const wallet=await page.request.get('/api/wallet').then(response=>response.json());
+		expect(wallet.transactions[0]).toMatchObject({type:'DEPOSIT',status:'PENDING_REVIEW',hasReceipt:false,method:'Internal simulated deposit'});
+	}finally{
+		await adminPage.request.put('/api/admin/settings',{data:{key:SIMULATED_BTC_ADDRESS_SETTING,value:priorBitcoinAddress?.value||''}}).catch(()=>undefined);
+		await adminContext.close();
+	}
 });
 
 test('external payment methods cannot be configured or exposed to users',async({browser,page})=>{
@@ -1863,37 +1906,44 @@ test('admin funding permissions gate DEMO simulated requests',async({browser,pag
 });
 
 test('approved deposit receipts use the credited amount and reviewer audit',async({browser,page})=>{
-	await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
-	await selectAccountMode(page,'REAL');
-	const startingBalance=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
-	const deposit=await page.request.post('/api/wallet',depositPostOptions(randomUUID(),{type:'DEPOSIT',amount:100,currency:'USD',transactionReference:`E2E-${randomUUID()}`}));
-	expect(deposit.status()).toBe(201);
-	const request=await deposit.json();
-	await logout(page);
 	const adminContext=await browser.newContext();
+	const adminPage=await adminContext.newPage();
+	const priorBitcoinAddress=await db.systemSetting.findUnique({where:{key:SIMULATED_BTC_ADDRESS_SETTING},select:{value:true}});
+	const btcAddress='bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh';
 	try{
-		const adminPage=await adminContext.newPage();
 		await loginAs(adminPage,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
+		const configured=await adminPage.request.put('/api/admin/settings',{data:{key:SIMULATED_BTC_ADDRESS_SETTING,value:btcAddress}});
+		expect(configured.status()).toBe(200);
+		await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
+		await selectAccountMode(page,'REAL');
+		const startingBalance=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
+		const deposit=await page.request.post('/api/wallet',depositPostOptions(randomUUID(),{type:'DEPOSIT',amount:100,currency:'USD',transactionReference:`E2E-${randomUUID()}`,simulatedBitcoinAddress:btcAddress,simulatedBitcoinAddressAcknowledged:true}));
+		expect(deposit.status()).toBe(201);
+		const request=await deposit.json();
+		await logout(page);
 		const approval=await adminPage.request.patch('/api/admin/funding',{data:{id:request.id,decision:'APPROVED',creditedAmount:100,note:'Verified exact requested amount'}});
 		expect(approval.status()).toBe(200);
 		expect(Number((await approval.json()).creditedAmount)).toBe(100);
-	}finally{await adminContext.close();}
-	await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
-	await selectAccountMode(page,'REAL');
-	const wallet=await page.request.get('/api/wallet').then(response=>response.json());
-	expect(Number(wallet.balance)).toBeCloseTo(startingBalance+100,2);
-	const transaction=wallet.transactions.find((item:{id:string})=>item.id===request.id);
-	expect(transaction).toMatchObject({status:'APPROVED',creditedAmount:'100',reviewedBy:{email:fixture('ADMIN_EMAIL')}});
-	expect(transaction.reviewedAt).toBeTruthy();
-	await page.goto('/wallet');
-	const receiptDetails=page.locator('details').filter({hasText:request.id}).first();
-	await receiptDetails.locator('summary').click();
-	await expect(receiptDetails.getByText('$100.00',{exact:true}).last()).toBeVisible();
-	await expect(receiptDetails.getByText('Reviewed by',{exact:true})).toBeVisible();
-	await expect(receiptDetails.getByText(fixture('ADMIN_EMAIL'),{exact:true})).toHaveCount(0);
-	const downloadPromise=page.waitForEvent('download');
-	await receiptDetails.getByRole('button',{name:'Download PDF'}).click();
-	expect((await downloadPromise).suggestedFilename()).toContain('approved');
+		await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
+		await selectAccountMode(page,'REAL');
+		const wallet=await page.request.get('/api/wallet').then(response=>response.json());
+		expect(Number(wallet.balance)).toBeCloseTo(startingBalance+100,2);
+		const transaction=wallet.transactions.find((item:{id:string})=>item.id===request.id);
+		expect(transaction).toMatchObject({status:'APPROVED',creditedAmount:'100',reviewedBy:{email:fixture('ADMIN_EMAIL')}});
+		expect(transaction.reviewedAt).toBeTruthy();
+		await page.goto('/wallet');
+		const receiptDetails=page.locator('details').filter({hasText:request.id}).first();
+		await receiptDetails.locator('summary').click();
+		await expect(receiptDetails.getByText('$100.00',{exact:true}).last()).toBeVisible();
+		await expect(receiptDetails.getByText('Reviewed by',{exact:true})).toBeVisible();
+		await expect(receiptDetails.getByText(fixture('ADMIN_EMAIL'),{exact:true})).toHaveCount(0);
+		const downloadPromise=page.waitForEvent('download');
+		await receiptDetails.getByRole('button',{name:'Download PDF'}).click();
+		expect((await downloadPromise).suggestedFilename()).toContain('approved');
+	}finally{
+		await adminPage.request.put('/api/admin/settings',{data:{key:SIMULATED_BTC_ADDRESS_SETTING,value:priorBitcoinAddress?.value||''}}).catch(()=>undefined);
+		await adminContext.close();
+	}
 });
 
 test('matured no-approval DEMO investments automatically credit their configured target once',async({page})=>{

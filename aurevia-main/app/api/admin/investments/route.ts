@@ -3,7 +3,7 @@ import {AccountMode,InvestmentOpportunityStatus,InvestmentRisk,InvestmentStatus,
 import {z,ZodError} from 'zod';
 import {requireAdmin} from '@/lib/auth';
 import {db} from '@/lib/db';
-import {balance,ensureSystemAccount,ensureUserLedger,postDoubleEntry,reservedWithdrawalAmount} from '@/lib/ledger';
+import {balance,ensureSystemAccount,ensureUserLedger,postDoubleEntry,reservedWithdrawalAmount,roundUsdAmount} from '@/lib/ledger';
 import {InvestmentAction,nextInvestmentStatus,simulatedInvestmentPayout} from '@/lib/investment-policy';
 import {createNotification} from '@/lib/notifications';
 import {jsonSafe} from '@/lib/serializers';
@@ -69,6 +69,8 @@ export async function POST(request:Request){
   const body=await request.json() as {action?:string};
   if(body.action==='initiate'){
    const input=initiationSchema.parse(body);
+   const requestedAmount=roundUsdAmount(input.amount);
+   if(requestedAmount.lte(0))throw new Error('INVALID_AMOUNT');
    const idempotencyKey=request.headers.get('Idempotency-Key')||'';
    if(!requestKeyPattern.test(idempotencyKey))return NextResponse.json({error:'A valid idempotency key is required.'},{status:400});
    if(input.maturesAt<=input.startsAt)throw new Error('INVALID_INVESTMENT_DATES');
@@ -79,7 +81,7 @@ export async function POST(request:Request){
     if(prior){
      const expectedTarget=input.targetReturnPercent===null?prior.opportunity.targetReturnPercent:new Prisma.Decimal(input.targetReturnPercent);
      const matchingTarget=expectedTarget===null?prior.targetReturnPercent===null:prior.targetReturnPercent?.equals(expectedTarget)===true;
-     const matches=prior.userId===input.userId&&prior.opportunityId===input.opportunityId&&prior.accountMode===input.accountMode&&prior.amount.equals(input.amount)&&matchingTarget&&prior.activatedAt?.getTime()===input.startsAt.getTime()&&prior.maturesAt?.getTime()===input.maturesAt.getTime();
+     const matches=prior.userId===input.userId&&prior.opportunityId===input.opportunityId&&prior.accountMode===input.accountMode&&prior.amount.equals(requestedAmount)&&matchingTarget&&prior.activatedAt?.getTime()===input.startsAt.getTime()&&prior.maturesAt?.getTime()===input.maturesAt.getTime();
      if(!matches)throw new Error('IDEMPOTENCY_KEY_REUSED');
      return {investment:prior,replay:true};
     }
@@ -91,9 +93,9 @@ export async function POST(request:Request){
     if(user.accountRestricted)throw new Error('INVESTMENT_USER_RESTRICTED');
     if(!opportunity||opportunity.status!==InvestmentOpportunityStatus.AVAILABLE)throw new Error('INVESTMENT_UNAVAILABLE');
     if(input.accountMode===AccountMode.DEMO&&!opportunity.demoEligible||input.accountMode===AccountMode.REAL&&!opportunity.realEligible)throw new Error('INVESTMENT_MODE_UNAVAILABLE');
-    if(input.amount<Number(opportunity.minimumAmount)||(opportunity.maximumAmount&&input.amount>Number(opportunity.maximumAmount)))throw new Error('INVESTMENT_AMOUNT_OUT_OF_RANGE');
+    if(requestedAmount.lt(opportunity.minimumAmount)||(opportunity.maximumAmount&&requestedAmount.gt(opportunity.maximumAmount)))throw new Error('INVESTMENT_AMOUNT_OUT_OF_RANGE');
     if(opportunity.startsAt&&input.startsAt<opportunity.startsAt)throw new Error('INVESTMENT_NOT_STARTED');
-    const amount=new Prisma.Decimal(input.amount);
+    const amount=requestedAmount;
     const targetReturnPercent=input.targetReturnPercent===null?opportunity.targetReturnPercent:new Prisma.Decimal(input.targetReturnPercent);
     const now=new Date();
     const status=input.startsAt<=now?InvestmentStatus.ACTIVE:InvestmentStatus.APPROVED;
@@ -122,7 +124,7 @@ export async function POST(request:Request){
   if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
   if(error instanceof Error&&error.message==='FORBIDDEN')return NextResponse.json({error:'Forbidden'},{status:403});
   if(error instanceof Error&&['IDEMPOTENCY_KEY_REUSED','INVESTMENT_UNAVAILABLE','INVESTMENT_MODE_UNAVAILABLE','INVESTMENT_USER_UNAVAILABLE','INVESTMENT_USER_RESTRICTED','INVESTMENT_NOT_STARTED'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:409});
-  if(error instanceof Error&&['INVESTMENT_AMOUNT_OUT_OF_RANGE','INSUFFICIENT_SIMULATED_BALANCE','INVALID_INVESTMENT_DATES','INVALID_INVESTMENT_DURATION'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:400});
+  if(error instanceof Error&&['INVESTMENT_AMOUNT_OUT_OF_RANGE','INSUFFICIENT_SIMULATED_BALANCE','INVALID_INVESTMENT_DATES','INVALID_INVESTMENT_DURATION','INVALID_AMOUNT'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:400});
   if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')return NextResponse.json({error:'This investment initiation was already received.'},{status:409});
   return NextResponse.json({error:'Unable to create the investment opportunity.'},{status:400});
  }

@@ -3,6 +3,7 @@ import {z,ZodError} from 'zod';
 import {requireAdmin} from '@/lib/auth';
 import {anonymizeAccount,createClosedAccountPasswordHash} from '@/lib/account-deletion';
 import {db} from '@/lib/db';
+import {getServerConfiguration} from '@/lib/config/env';
 import {deletePrivateObject} from '@/lib/private-storage';
 import {rateLimit} from '@/lib/rate-limit';
 
@@ -14,7 +15,13 @@ export async function POST(request:Request){
 		rateLimit(`admin-account-delete:${admin.id}`,10,60*60_000);
 		const input=schema.parse(await request.json());
 		const replacementPasswordHash=await createClosedAccountPasswordHash();
-		const files=await db.$transaction(tx=>anonymizeAccount(tx,{userId:input.userId,actorId:admin.id,replacementPasswordHash,reason:input.reason}),{isolationLevel:'Serializable',maxWait:5_000,timeout:15_000});
+		const configuredAdminEmail=getServerConfiguration().auth.adminEmail.trim().toLowerCase();
+		const files=await db.$transaction(async tx=>{
+			const target=await tx.user.findUnique({where:{id:input.userId},select:{email:true,role:true}});
+			if(!target)throw new Error('ACCOUNT_NOT_FOUND');
+			if(target.role==='ADMIN'||(configuredAdminEmail&&target.email.toLowerCase()===configuredAdminEmail))throw new Error('ADMIN_ACCOUNT_ISOLATED');
+			return anonymizeAccount(tx,{userId:input.userId,actorId:admin.id,replacementPasswordHash,reason:input.reason});
+		},{isolationLevel:'Serializable',maxWait:5_000,timeout:15_000});
 		await Promise.all(files.map(file=>deletePrivateObject(file.area,file.ownerId,file.key)));
 		return NextResponse.json({ok:true,userId:input.userId});
 	}catch(error){
@@ -25,6 +32,7 @@ export async function POST(request:Request){
 		if(error instanceof Error&&error.message==='ACCOUNT_NOT_FOUND')return NextResponse.json({error:'Account not found.'},{status:404});
 		if(error instanceof Error&&error.message==='LAST_ACTIVE_ADMIN_REQUIRED')return NextResponse.json({error:'The last active administrator account cannot be deleted.'},{status:409});
 		if(error instanceof Error&&error.message==='ACCOUNT_ALREADY_CLOSED')return NextResponse.json({error:'This account is already closed.'},{status:409});
+		if(error instanceof Error&&error.message==='ADMIN_ACCOUNT_ISOLATED')return NextResponse.json({error:'Administrator accounts cannot be deleted from user account management.'},{status:409});
 		return NextResponse.json({error:'Account deletion could not be completed.'},{status:500});
 	}
 }

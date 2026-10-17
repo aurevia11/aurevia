@@ -3,7 +3,7 @@ import {AccountMode,Prisma,FundingStatus,FundingType,NotificationType} from '@pr
 import {z,ZodError} from 'zod';
 import {requireUser} from '@/lib/auth';
 import {db} from '@/lib/db';
-import {balance,ensureUserLedger} from '@/lib/ledger';
+import {balance,ensureUserLedger,roundUsdAmount} from '@/lib/ledger';
 import {jsonSafe} from '@/lib/serializers';
 import {createNotification} from '@/lib/notifications';
 import {notifyActiveAdmins} from '@/lib/notifications';
@@ -112,17 +112,20 @@ export async function POST(req:Request){
 			if(controls.accountRestricted)throw new Error('ACCOUNT_RESTRICTED');
 		}
 		const currency=parsed.currency.toUpperCase();
+		const amount=currency==='USD'?roundUsdAmount(parsed.amount):new Prisma.Decimal(parsed.amount);
+		if(amount.lte(0))throw new Error('INVALID_AMOUNT');
 
 		const result=await db.$transaction(async tx=>{
 			const duplicate=await tx.fundingRequest.findUnique({where:{idempotencyKey}});
 			if(duplicate){
-				if(duplicate.userId!==user.id||duplicate.accountMode!==user.accountMode||duplicate.type!==parsed.type||!duplicate.amount.equals(parsed.amount)||duplicate.currency!==currency||duplicate.paymentMethodId!==null)throw new Error('IDEMPOTENCY_KEY_REUSED');
+				if(duplicate.userId!==user.id||duplicate.accountMode!==user.accountMode||duplicate.type!==parsed.type||!duplicate.amount.equals(amount)||duplicate.currency!==currency||duplicate.paymentMethodId!==null)throw new Error('IDEMPOTENCY_KEY_REUSED');
 				return {request:duplicate,replay:true};
 			}
 			let simulatedBitcoinAddressAcknowledged=false;
 			if(parsed.type===FundingType.DEPOSIT){
 				const configured=await tx.systemSetting.findUnique({where:{key:SIMULATED_BTC_ADDRESS_SETTING},select:{value:true}});
 				const address=configured?.value.trim()||'';
+				if(user.accountMode==='REAL'&&!address)throw new Error('SIMULATED_BTC_ADDRESS_NOT_CONFIGURED');
 				if(address&&!isBitcoinMainnetAddress(address))throw new Error('SIMULATED_BTC_ADDRESS_INVALID');
 				if(address){
 					if(parsed.simulatedBitcoinAddress!==address)throw new Error('SIMULATED_BTC_ADDRESS_CHANGED');
@@ -135,7 +138,6 @@ export async function POST(req:Request){
 			if(parsed.type==='WITHDRAWAL'&&!fundingUser.withdrawalEnabled)throw new Error('WITHDRAWAL_DISABLED');
 			if(parsed.type==='WITHDRAWAL'&&fundingUser.accountRestricted)throw new Error('ACCOUNT_RESTRICTED');
 			if(user.accountMode==='REAL'&&parsed.type==='DEPOSIT'&&parsed.paymentMethodId&&fundingUser.kycStatus!=='APPROVED')throw new Error('REAL_KYC_REQUIRED');
-			const amount=new Prisma.Decimal(parsed.amount);
 			if(parsed.type==='WITHDRAWAL'){
 				const account=await ensureUserLedger(tx,user.id,user.accountMode,currency);
 				const currentBalance=await balance(tx,account.id);
@@ -187,6 +189,7 @@ export async function POST(req:Request){
 		if(error instanceof PrivateStorageError)return NextResponse.json({error:error.message},{status:error.status});
 		if(error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2002')return NextResponse.json({error:'This submission was already received.'},{status:409});
 		if(error instanceof Error&&error.message==='SIMULATED_BTC_ADDRESS_ACK_REQUIRED')return NextResponse.json({error:'Copy or scan the configured simulated Bitcoin address and confirm before submitting this deposit.'},{status:400});
+		if(error instanceof Error&&error.message==='SIMULATED_BTC_ADDRESS_NOT_CONFIGURED')return NextResponse.json({error:'A simulated Bitcoin display address is not configured. Contact an administrator before requesting a REAL deposit.'},{status:503});
 		if(error instanceof Error&&error.message==='SIMULATED_BTC_ADDRESS_CHANGED')return NextResponse.json({error:'The simulated Bitcoin display address changed. Refresh the wallet and confirm the current address.'},{status:409});
 		if(error instanceof Error&&error.message==='SIMULATED_BTC_ADDRESS_INVALID')return NextResponse.json({error:'The administrator-configured simulated Bitcoin display address is invalid. Contact support.'},{status:503});
 		const known=['IDEMPOTENCY_KEY_REUSED','PAYMENT_METHOD_UNAVAILABLE','AMOUNT_OUT_OF_RANGE','PAYMENT_INSTRUCTIONS_UNAVAILABLE','WITHDRAWAL_DESTINATION_REQUIRED','WITHDRAWAL_NETWORK_REQUIRED','INSUFFICIENT_AVAILABLE_BALANCE','DEPOSITS_DISABLED','WITHDRAWAL_DISABLED','ACCOUNT_RESTRICTED','REAL_KYC_REQUIRED','INVALID_AMOUNT','FIRST_TRADE_REQUIRED'];

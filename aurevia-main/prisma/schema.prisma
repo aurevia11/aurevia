@@ -24,6 +24,7 @@ enum UserStatus {
   FROZEN
   SUSPENDED
   CLOSED
+  DELETED
 }
 
 enum KycStatus {

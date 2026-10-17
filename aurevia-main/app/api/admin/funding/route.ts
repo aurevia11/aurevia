@@ -3,7 +3,7 @@ import {AccountMode,FundingStatus,FundingType,NotificationType,Prisma} from '@pr
 import {z,ZodError} from 'zod';
 import {requireAdmin} from '@/lib/auth';
 import {db} from '@/lib/db';
-import {ensureSystemAccount,ensureUserLedger,postDoubleEntry,balance} from '@/lib/ledger';
+import {ensureSystemAccount,ensureUserLedger,postDoubleEntry,balance,roundUsdAmount} from '@/lib/ledger';
 import {jsonSafe} from '@/lib/serializers';
 import {createNotification} from '@/lib/notifications';
 import {sendSupportEmail} from '@/lib/email';
@@ -49,7 +49,8 @@ export async function PATCH(req:Request){
 				await createNotification(tx,{userId:updated.userId,type:updated.type===FundingType.DEPOSIT?NotificationType.DEPOSIT:NotificationType.WITHDRAWAL,title:'More information requested',message:`An administrator needs more information about your simulated ${updated.type.toLowerCase()} request. ${input.note}`,dedupeKey:`funding:${updated.id}:info:${updated.updatedAt.toISOString()}`,relatedEntity:'FUNDING',relatedId:updated.id,actionUrl:`/wallet/transactions/${updated.id}`});
 				return updated;
 			}
-			const creditedAmount=input.creditedAmount??Number(current.amount);
+			const requestedCredit=input.creditedAmount??Number(current.amount);
+			const creditedAmount=current.currency==='USD'?roundUsdAmount(requestedCredit).toNumber():requestedCredit;
 			if(current.type===FundingType.DEPOSIT&&input.decision==='APPROVED')validateDepositApproval(current.amount.toString(),String(creditedAmount));
 			if(creditedAmount>Number(current.amount))throw new Error('CREDIT_EXCEEDS_REQUEST');
 			const fundingUser=await tx.user.findUnique({where:{id:current.userId},select:{withdrawalEnabled:true,accountRestricted:true}});

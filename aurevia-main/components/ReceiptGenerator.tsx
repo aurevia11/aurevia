@@ -160,7 +160,14 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 		if(!receiptRef.current||busy)return;
 		setBusy(true);setError('');
 		try{
-			const canvas=await html2canvas(receiptRef.current,{scale:2,backgroundColor:'#ffffff',logging:false,useCORS:true});
+			const element=receiptRef.current;
+			const originalMaxHeight=element.style.maxHeight;
+			const originalOverflowY=element.style.overflowY;
+			let canvas:HTMLCanvasElement;
+			element.style.maxHeight='none';
+			element.style.overflowY='visible';
+			try{canvas=await html2canvas(element,{scale:2,backgroundColor:'#ffffff',logging:false,useCORS:true});}
+			finally{element.style.maxHeight=originalMaxHeight;element.style.overflowY=originalOverflowY;}
 			if(format==='png'){
 				const link=document.createElement('a');link.download=`${fileName}.png`;link.href=canvas.toDataURL('image/png');link.click();
 			}else{
@@ -176,7 +183,7 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 	if(!visible)return <button type="button" className="min-h-10 rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm" onClick={()=>setVisible(true)}>View transaction receipt</button>;
 
 	return <div className="grid min-w-0 gap-3">
-		<article ref={receiptRef} className="w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-white text-slate-900 shadow-lg shadow-slate-900/5" aria-label={`${receiptTitle} ${currentReceipt.status.toLowerCase().replaceAll('_',' ')} receipt`}>
+		<article ref={receiptRef} className="receipt-container rounded-3xl border border-slate-200 bg-white text-slate-900 shadow-lg shadow-slate-900/5" aria-label={`${receiptTitle} ${currentReceipt.status.toLowerCase().replaceAll('_',' ')} receipt`}>
 			<header className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4 sm:px-7">
 				<h2 className="text-base font-semibold tracking-tight sm:text-lg">Bank transfer to</h2>
 				<button type="button" className="grid size-10 shrink-0 place-items-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-900" aria-label="Close receipt" onClick={()=>setVisible(false)}><X size={19}/></button>
