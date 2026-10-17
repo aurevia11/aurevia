@@ -818,51 +818,68 @@ test('REAL-interface simulated deposits and withdrawals require admin review and
 	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5000);
 });
 
-test('Account Funding loads its wallet independently and offers reviewed simulated REAL funding',async({page})=>{
-	await page.setViewportSize({width:390,height:844});
-	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
-	await selectAccountMode(page,'DEMO');
-	await page.goto('/wallet');
-	await expect(page.getByRole('heading',{name:/wallet|funding/i}).first()).toBeVisible();
-	await expect(page.locator('.wallet-balance-value')).toHaveText('$5,000.00');
-	await expect(page.getByRole('status').filter({hasText:'Internal simulated funding'})).toBeVisible();
-	await expect(page.getByLabel('Payment method')).toHaveCount(0);
-	await expect(page.locator('.wallet-type-switch')).toBeVisible();
-	await page.getByRole('button',{name:'Hide balances'}).click();
-	await expect(page.getByRole('button',{name:'Show balances'})).toBeVisible();
-	await page.getByRole('button',{name:'Show balances'}).click();
-	await page.route('**/api/payment-methods',route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Payment methods are temporarily unavailable.'})}));
-	await page.getByRole('button',{name:'Refresh wallet history'}).click();
-	await expect(page.getByText('Loading wallet data…')).toHaveCount(0);
-	await expect(page.locator('.wallet-balance-value')).toHaveText('$5,000.00');
-	await expect(page.getByRole('status').filter({hasText:'Internal simulated funding'})).toBeVisible();
-	await page.unroute('**/api/payment-methods');
-	await page.route('**/api/wallet',route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Wallet data is temporarily unavailable.'})}));
-	await page.getByRole('button',{name:'Refresh wallet history'}).click();
-	await expect(page.getByText('Loading wallet data…')).toHaveCount(0);
-	await expect(page.locator('.wallet-balance-value')).toHaveText('Unavailable');
-	await expect(page.getByRole('alert').filter({hasText:'Wallet data is temporarily unavailable.'})).toBeVisible();
-	await expect(page.getByLabel('Amount',{exact:true})).toBeVisible();
-	await page.unroute('**/api/wallet');
-	await page.getByRole('button',{name:'Refresh wallet history'}).click();
-	await expect(page.locator('.wallet-balance-value')).toHaveText('$5,000.00');
-	await selectAccountMode(page,'REAL');
-	await page.goto('/wallet');
-	const methods=await page.request.get('/api/payment-methods').then(response=>response.json());
-	expect(methods).toMatchObject({methods:[],fundingStatus:'SIMULATED',simulationAvailable:true,realFundingAvailable:true,realWithdrawalAvailable:true,manualDepositReviewAvailable:true,externalPaymentProcessing:'DISABLED'});
-	await expect(page.getByText(/Internal simulated funding/)).toBeVisible();
-	await expect(page.getByLabel('Amount',{exact:true})).toBeVisible();
-	await expect(page.getByRole('button',{name:/Submit simulated deposit request/i})).toBeEnabled();
-	await expect(page.getByRole('alert').filter({hasText:'Wallet data is temporarily unavailable'})).toHaveCount(0);
-	for(const width of [320,375,390,430,1440]){
-		await page.setViewportSize({width,height:900});
-		await expectNoHorizontalOverflow(page);
+test('Account Funding loads its wallet independently and offers reviewed simulated REAL funding',async({browser,page})=>{
+	const adminContext=await browser.newContext();
+	const adminPage=await adminContext.newPage();
+	const priorBitcoinAddress=await db.systemSetting.findUnique({where:{key:SIMULATED_BTC_ADDRESS_SETTING},select:{value:true}});
+	const bitcoinAddress='bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh';
+	try{
+		await loginAs(adminPage,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
+		const configured=await adminPage.request.put('/api/admin/settings',{data:{key:SIMULATED_BTC_ADDRESS_SETTING,value:bitcoinAddress}});
+		expect(configured.status()).toBe(200);
+		await page.setViewportSize({width:390,height:844});
+		await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
+		await selectAccountMode(page,'DEMO');
+		await page.goto('/wallet');
+		await expect(page.getByRole('heading',{name:/wallet|funding/i}).first()).toBeVisible();
+		await expect(page.locator('.wallet-balance-value')).toHaveText('$5,000.00');
+		await expect(page.getByRole('status').filter({hasText:'Internal simulated funding'})).toBeVisible();
+		await expect(page.getByLabel('Payment method')).toHaveCount(0);
+		await expect(page.locator('.wallet-type-switch')).toBeVisible();
+		await page.getByRole('button',{name:'Hide balances'}).click();
+		await expect(page.getByRole('button',{name:'Show balances'})).toBeVisible();
+		await page.getByRole('button',{name:'Show balances'}).click();
+		await page.route('**/api/payment-methods',route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Payment methods are temporarily unavailable.'})}));
+		await page.getByRole('button',{name:'Refresh wallet history'}).click();
+		await expect(page.getByText('Loading wallet data…')).toHaveCount(0);
+		await expect(page.locator('.wallet-balance-value')).toHaveText('$5,000.00');
+		await expect(page.getByRole('status').filter({hasText:'Internal simulated funding'})).toBeVisible();
+		await page.unroute('**/api/payment-methods');
+		await page.route('**/api/wallet',route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Wallet data is temporarily unavailable.'})}));
+		await page.getByRole('button',{name:'Refresh wallet history'}).click();
+		await expect(page.getByText('Loading wallet data…')).toHaveCount(0);
+		await expect(page.locator('.wallet-balance-value')).toHaveText('Unavailable');
+		await expect(page.getByRole('alert').filter({hasText:'Wallet data is temporarily unavailable.'})).toBeVisible();
+		await expect(page.getByLabel('Amount',{exact:true})).toBeVisible();
+		await page.unroute('**/api/wallet');
+		await page.getByRole('button',{name:'Refresh wallet history'}).click();
+		await expect(page.locator('.wallet-balance-value')).toHaveText('$5,000.00');
+		await selectAccountMode(page,'REAL');
+		await page.goto('/wallet');
+		const methods=await page.request.get('/api/payment-methods').then(response=>response.json());
+		expect(methods).toMatchObject({methods:[],fundingStatus:'SIMULATED',simulationAvailable:true,realFundingAvailable:true,realWithdrawalAvailable:true,manualDepositReviewAvailable:true,externalPaymentProcessing:'DISABLED'});
+		await expect(page.getByText(/Internal simulated funding/)).toBeVisible();
+		await expect(page.getByLabel('REAL account deposit method')).toHaveValue('BTC');
+		await expect(page.getByLabel('BTC address')).toHaveValue(bitcoinAddress);
+		await expect(page.getByLabel('Amount',{exact:true})).toBeVisible();
+		await expect(page.getByRole('button',{name:/Submit simulated deposit request/i})).toBeDisabled();
+		await page.getByRole('button',{name:'I scanned or copied this address'}).click();
+		await expect(page.getByRole('button',{name:/Submit simulated deposit request/i})).toBeEnabled();
+		await expect(page.getByRole('alert').filter({hasText:'Wallet data is temporarily unavailable'})).toHaveCount(0);
+		for(const width of [320,375,390,430,1440]){
+			await page.setViewportSize({width,height:900});
+			await expectNoHorizontalOverflow(page);
+		}
+	}finally{
+		if(await page.request.get('/api/auth/session').then(response=>response.ok()))await page.request.patch('/api/account/mode',{data:{accountMode:'DEMO'}});
+		await adminPage.request.put('/api/admin/settings',{data:{key:SIMULATED_BTC_ADDRESS_SETTING,value:priorBitcoinAddress?.value||''}}).catch(()=>undefined);
+		await adminContext.close();
 	}
-	await selectAccountMode(page,'DEMO');
 });
 
 test('DEMO trading supports cash-backed buy and owned-unit sell execution',async({browser,page})=>{
 	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
+	await selectAccountMode(page,'DEMO');
 	const symbol=fixture('INSTRUMENT_B');
 	await page.goto('/markets');
 	await expect(page.getByRole('heading',{name:'Markets',exact:true})).toBeVisible();
@@ -921,6 +938,7 @@ test('DEMO trading supports cash-backed buy and owned-unit sell execution',async
 
 test('dashboard quick trade buys and sells crypto against the DEMO ledger',async({page})=>{
 	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
+	await selectAccountMode(page,'DEMO');
 	await page.goto('/dashboard');
 	await expect(page.getByRole('heading',{name:'Simulated crypto trading'})).toBeVisible();
 	const wallet=async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
@@ -953,6 +971,7 @@ test('dashboard quick trade buys and sells crypto against the DEMO ledger',async
 
 test('closing a DEMO position records a sell execution, reconciles portfolio, and notifies',async({page})=>{
 	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
+	await selectAccountMode(page,'DEMO');
 	const initialWallet=await page.request.get('/api/wallet').then(response=>response.json());
 	expect(Number(initialWallet.balance)).toBeGreaterThan(0);
 	const instruments=await page.request.get('/api/market').then(response=>response.json());
