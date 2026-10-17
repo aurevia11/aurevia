@@ -1,7 +1,7 @@
 'use client';
 
-import {useRef,useState} from 'react';
-import {Download} from 'lucide-react';
+import {useEffect,useRef,useState} from 'react';
+import {Check,ChevronDown,Download,Landmark,X} from 'lucide-react';
 import html2canvas from 'html2canvas';
 import {jsPDF} from 'jspdf';
 
@@ -12,6 +12,7 @@ export type ReceiptData={
 	type?:'DEPOSIT'|'WITHDRAWAL'|'CREDIT'|'DEBIT';
 	accountMode?:'DEMO'|'REAL';
 	simulated?:boolean;
+	isWithdrawal?:boolean;
 	createdAt:string;
 	reviewedAt?:string|null;
 	completedAt?:string|null;
@@ -27,22 +28,130 @@ export type ReceiptData={
 	currency:string;
 	method:string;
 	creditedAmount?:number|string;
+	recipientName?:string|null;
+	recipientNumber?:string|null;
+	sourceName?:string|null;
+	sourceNumber?:string|null;
+	destinationName?:string|null;
+	destinationNumber?:string|null;
+	purpose?:string|null;
+	fee?:number|string|null;
+	gateway?:string|null;
 };
 
-const dateLabel=(value:string)=>new Intl.DateTimeFormat('en-US',{dateStyle:'medium',timeStyle:'short',timeZone:'UTC'}).format(new Date(value));
-const amountLabel=(value:number|string,currency:string)=>`${Number(value).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:8})} ${currency}`;
+type ReceiptPatch=Partial<ReceiptData>;
+type ReceiptWindow=Window&{
+	AUREVIA_RECEIPT_DATA?:ReceiptPatch;
+	AureviaReceipt?:{update:(data:ReceiptPatch)=>void};
+};
+
+declare global {
+	interface Window {
+		AUREVIA_RECEIPT_DATA?:ReceiptPatch;
+		AureviaReceipt?:{update:(data:ReceiptPatch)=>void};
+	}
+}
+
+const allowedStatuses:ReceiptData['status'][]=['PENDING','PENDING_REVIEW','PROCESSING','APPROVED','COMPLETED','REJECTED','FAILED','CANCELLED'];
+const allowedTypes:NonNullable<ReceiptData['type']>[]=['DEPOSIT','WITHDRAWAL','CREDIT','DEBIT'];
+const stringFields:Array<keyof ReceiptData>=['id','reference','createdAt','name','email','currency','method','accountMode','reviewedAt','completedAt','accountReference','externalReference','adminNote','recipientName','recipientNumber','sourceName','sourceNumber','destinationName','destinationNumber','purpose','gateway'];
+const scalarFields:Array<keyof ReceiptData>=['amount','creditedAmount','previousBalance','resultingBalance','fee'];
+
+function readReceiptPatch(value:unknown):ReceiptPatch{
+	if(!value||typeof value!=='object'||Array.isArray(value))return {};
+	const source=value as Record<string,unknown>;
+	const patch:ReceiptPatch={};
+	for(const field of stringFields){
+		const candidate=source[field];
+		if(typeof candidate==='string'&&candidate.trim())Object.assign(patch,{[field]:candidate});
+	}
+	for(const field of scalarFields){
+		const candidate=source[field];
+		if((typeof candidate==='string'&&candidate.trim())||(typeof candidate==='number'&&Number.isFinite(candidate)))Object.assign(patch,{[field]:candidate});
+	}
+	const status=typeof source.status==='string'?source.status.toUpperCase():'';
+	if(allowedStatuses.includes(status as ReceiptData['status']))patch.status=status as ReceiptData['status'];
+	const type=typeof source.type==='string'?source.type.toUpperCase():'';
+	if(allowedTypes.includes(type as NonNullable<ReceiptData['type']>))patch.type=type as NonNullable<ReceiptData['type']>;
+	if(source.accountMode==='DEMO'||source.accountMode==='REAL')patch.accountMode=source.accountMode;
+	if(typeof source.simulated==='boolean')patch.simulated=source.simulated;
+	if(typeof source.isWithdrawal==='boolean')patch.isWithdrawal=source.isWithdrawal;
+	if(source.reviewedBy&&typeof source.reviewedBy==='object'&&!Array.isArray(source.reviewedBy)){
+		const reviewer=source.reviewedBy as Record<string,unknown>;
+		if(typeof reviewer.name==='string'||reviewer.name===null)patch.reviewedBy={name:reviewer.name};
+	}
+	return patch;
+}
+
+function readUrlPatch(search:string):ReceiptPatch{
+	const params=new URLSearchParams(search);
+	const patch:Record<string,unknown>={};
+	const aliases:Record<string,string>={referenceId:'reference',accountNumber:'recipientNumber',destinationAddress:'destinationNumber'};
+	for(const [key,value] of params.entries()){
+		const field=aliases[key]||key;
+		if(field==='isWithdrawal'||field==='simulated'){
+			if(value==='true'||value==='false')patch[field]=value==='true';
+		}else if(value.trim())patch[field]=value;
+	}
+	return readReceiptPatch(patch);
+}
+
+const dateLabel=(value:string)=>{
+	const date=new Date(value);
+	return Number.isNaN(date.getTime())?'Not recorded':new Intl.DateTimeFormat('en-US',{dateStyle:'medium',timeStyle:'short',timeZone:'UTC'}).format(date);
+};
+const amountLabel=(value:number|string,currency:string,isWithdrawal:boolean)=>{
+	const amount=Number(value);
+	if(!Number.isFinite(amount))return '—';
+	const formatted=`${Math.abs(amount).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:8})} ${currency}`;
+	return isWithdrawal?`-${formatted}`:formatted;
+};
 
 export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 	const receiptRef=useRef<HTMLElement>(null);
+	const [currentReceipt,setCurrentReceipt]=useState(receipt);
 	const [busy,setBusy]=useState(false);
 	const [error,setError]=useState('');
-	const kind=receipt.type||'DEPOSIT';
-	const simulated=receipt.simulated??true;
-	const approved=receipt.status==='APPROVED'||receipt.status==='COMPLETED';
-	const completed=receipt.status==='COMPLETED';
-	const statusTone=receipt.status==='COMPLETED'?'border-emerald-300 bg-emerald-50 text-emerald-900':receipt.status==='APPROVED'?'border-[#b79b56] bg-[#f4eedb] text-[#5f4b1c]':receipt.status==='REJECTED'||receipt.status==='FAILED'||receipt.status==='CANCELLED'?'border-rose-200 bg-rose-50 text-rose-900':'border-slate-300 bg-slate-100 text-slate-800';
-	const title=kind==='DEPOSIT'?'Deposit':kind==='WITHDRAWAL'?'Withdrawal':kind==='CREDIT'?'Account credit':'Account debit';
-	const fileName=`aurevia-${kind.toLowerCase()}-${receipt.status.toLowerCase()}-${receipt.id}`;
+	const [visible,setVisible]=useState(true);
+
+	useEffect(()=>{
+		const view=window as ReceiptWindow;
+		const urlPatch=readUrlPatch(window.location.search);
+		const globalPatch=readReceiptPatch(view.AUREVIA_RECEIPT_DATA);
+		const initialPatch={
+			...(urlPatch.id&&urlPatch.id!==receipt.id?{}:urlPatch),
+			...(globalPatch.id&&globalPatch.id!==receipt.id?{}:globalPatch),
+		};
+		setCurrentReceipt({...receipt,...initialPatch});
+		const handleUpdate=(event:Event)=>{
+			const detail=(event as CustomEvent<unknown>).detail;
+			const patch=readReceiptPatch(detail);
+			if(patch.id&&patch.id!==receipt.id)return;
+			setCurrentReceipt(previous=>({...previous,...patch}));
+		};
+		const update=(value:ReceiptPatch)=>{
+			const patch=readReceiptPatch(value);
+			view.AUREVIA_RECEIPT_DATA={...readReceiptPatch(view.AUREVIA_RECEIPT_DATA),...patch};
+			window.dispatchEvent(new CustomEvent('aurevia:receipt-update',{detail:patch}));
+		};
+		view.AureviaReceipt={...view.AureviaReceipt,update};
+		window.addEventListener('aurevia:receipt-update',handleUpdate);
+		return()=>window.removeEventListener('aurevia:receipt-update',handleUpdate);
+	},[receipt]);
+
+	const kind=currentReceipt.type||'DEPOSIT';
+	const isWithdrawal=currentReceipt.isWithdrawal===true||kind==='WITHDRAWAL';
+	const isSuccessful=currentReceipt.status==='APPROVED'||currentReceipt.status==='COMPLETED';
+	const isFailed=currentReceipt.status==='REJECTED'||currentReceipt.status==='FAILED'||currentReceipt.status==='CANCELLED';
+	const statusLabel=isSuccessful?'Success':isFailed?'Failed':'Processing';
+	const recipientName=currentReceipt.recipientName||currentReceipt.destinationName||'Aurevia-Xchange Inc.';
+	const recipientNumber=currentReceipt.recipientNumber||currentReceipt.destinationNumber||'Not provided';
+	const sourceName=currentReceipt.sourceName||'My Wallet';
+	const sourceNumber=currentReceipt.sourceNumber||currentReceipt.accountReference||'Not provided';
+	const destinationName=currentReceipt.destinationName||'Aurevia-Xchange Inc.';
+	const destinationNumber=currentReceipt.destinationNumber||currentReceipt.recipientNumber||'Not provided';
+	const purpose=currentReceipt.purpose||`${kind.charAt(0)}${kind.slice(1).toLowerCase()} · ${currentReceipt.accountMode||'Simulated'} account`;
+	const fileName=`aurevia-${kind.toLowerCase()}-${currentReceipt.status.toLowerCase()}-${currentReceipt.id}`;
 
 	async function exportReceipt(format:'png'|'pdf'){
 		if(!receiptRef.current||busy)return;
@@ -61,37 +170,67 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 		}finally{setBusy(false)}
 	}
 
+	if(!visible)return <button type="button" className="min-h-10 rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm" onClick={()=>setVisible(true)}>View transaction receipt</button>;
+
 	return <div className="grid min-w-0 gap-3">
-		<article ref={receiptRef} className="w-full max-w-2xl overflow-hidden rounded-xl border border-[#d9ddcf] bg-[#fbfcf8] text-[#13241d] shadow-xl" aria-label={`${title} ${receipt.status.toLowerCase()} receipt`}>
-			<header className="flex items-center justify-between gap-3 bg-[#10251d] px-5 py-5 text-[#f8f8f4] sm:px-8">
-				<div className="flex items-center gap-3"><span className="grid size-11 shrink-0 place-items-center rounded-lg border border-[#c5a46b] bg-[#0b1914] text-lg font-bold text-[#d6bd79]">A</span><div><b className="block text-base tracking-wide">Aurevia Invest</b><span className="text-xs text-[#bdc9bf]">Account activity record</span></div></div>
-				<span className={`shrink-0 border px-3 py-1 text-xs font-bold ${statusTone}`}>{receipt.status.replaceAll('_',' ')}</span>
+		<article ref={receiptRef} className="w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-white text-slate-900 shadow-lg shadow-slate-900/5" aria-label={`${statusLabel} transaction receipt`}>
+			<header className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4 sm:px-7">
+				<h2 className="text-base font-semibold tracking-tight sm:text-lg">Bank transfer to</h2>
+				<button type="button" className="grid size-10 shrink-0 place-items-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-900" aria-label="Close receipt" onClick={()=>setVisible(false)}><X size={19}/></button>
 			</header>
-			<div className="px-5 pb-6 pt-5 sm:px-8 sm:pb-8">
-			{simulated&&<p className="rounded-r-md border-l-2 border-[#b79b56] bg-[#f3f0e5] px-3 py-2 text-xs font-bold tracking-wide text-[#4c3c15]">SIMULATED INTERNAL LEDGER RECORD · No external payment, execution, or payout occurred.</p>}
-			{receipt.accountMode&&<p className="mt-5 text-xs font-semibold uppercase text-[#29493a]">{receipt.accountMode} simulated account</p>}
-			<div className="py-5"><p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-600">{title} receipt</p><h3 className="mt-2 text-2xl font-semibold tracking-tight text-[#10251d]">{completed?`${title} completed`:approved?`${title} approved`:receipt.status==='REJECTED'?`${title} rejected`:receipt.status==='CANCELLED'?`${title} cancelled`:`${title} request`}</h3><p className="mt-1 text-sm text-slate-600">Requested {dateLabel(receipt.createdAt)}</p></div>
-			<div className="mb-5 rounded-lg border border-[#e3e5dc] bg-white px-4 py-4 shadow-sm"><p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{approved?'Recorded amount':'Requested amount'}</p><p className="mt-1 text-2xl font-semibold tabular-nums text-[#10251d]">{amountLabel(approved?receipt.creditedAmount??receipt.amount:receipt.amount,receipt.currency)}</p></div>
-			<dl className="grid gap-x-8 border-y border-[#d8d9ce] py-4 text-sm sm:grid-cols-2">
-				<div className="py-2"><dt className="text-xs text-slate-500">Transaction reference</dt><dd className="mt-1 break-all font-medium">{receipt.reference}</dd></div>
-				{receipt.accountReference&&<div className="py-2"><dt className="text-xs text-slate-500">Account reference</dt><dd className="mt-1 break-all font-medium">{receipt.accountReference}</dd></div>}
-				{receipt.externalReference&&<div className="py-2"><dt className="text-xs text-slate-500">Internal request note</dt><dd className="mt-1 break-all font-medium">{receipt.externalReference}</dd></div>}
-				<div className="py-2"><dt className="text-xs text-slate-500">{kind==='WITHDRAWAL'?'Withdrawal method':'Activity'}</dt><dd className="mt-1 font-medium">{receipt.method}</dd></div>
-				<div className="py-2"><dt className="text-xs text-slate-500">Account holder</dt><dd className="mt-1 break-words font-medium">{receipt.name||'Account holder'}</dd><dd className="break-all text-xs text-slate-500">{receipt.email}</dd></div>
-				{approved&&<>
-					<div className="py-2"><dt className="text-xs text-slate-500">{completed?'Completion date':'Approval date'}</dt><dd className="mt-1 font-medium">{dateLabel(receipt.completedAt||receipt.reviewedAt||receipt.createdAt)}</dd></div>
-					<div className="py-2 sm:col-span-2"><dt className="text-xs text-slate-500">Admin reference</dt><dd className="mt-1 break-all font-medium">{receipt.reference}</dd></div>
-					{receipt.reviewedBy&&<div className="py-2 sm:col-span-2"><dt className="text-xs text-slate-500">Reviewed by</dt><dd className="mt-1 font-medium">{receipt.reviewedBy.name||'Authorized Aurevia administrator'}</dd></div>}
-				</>}
-				{receipt.previousBalance!==null&&receipt.previousBalance!==undefined&&<div className="py-2"><dt className="text-xs text-slate-500">Previous simulated balance</dt><dd className="mt-1 font-medium">{amountLabel(receipt.previousBalance,receipt.currency)}</dd></div>}
-				{receipt.resultingBalance!==null&&receipt.resultingBalance!==undefined&&<div className="py-2"><dt className="text-xs text-slate-500">Resulting simulated balance</dt><dd className="mt-1 font-medium">{amountLabel(receipt.resultingBalance,receipt.currency)}</dd></div>}
-				{receipt.adminNote&&<div className="py-2 sm:col-span-2"><dt className="text-xs text-slate-500">Admin review note</dt><dd className="mt-1 break-words font-medium">{receipt.adminNote}</dd></div>}
-			</dl>
-			<p className="py-5 text-sm leading-6 text-slate-700">{receipt.status==='REJECTED'?`This simulated request was rejected.${receipt.adminNote?` Admin note: ${receipt.adminNote}`:''}`:simulated?'This receipt documents a simulated internal ledger record only. It is not evidence of a real payment, held asset, broker execution, or payout.':kind==='DEPOSIT'?approved?'The approved amount has been credited to your simulated account ledger.':'Your simulated deposit request is awaiting administrator review; no ledger credit has been posted.':kind==='WITHDRAWAL'?completed?'The simulated withdrawal was debited from the internal account ledger. No external payout was made.':'Your simulated withdrawal request is awaiting administrator review; no ledger debit has been posted.':`The administrator recorded this ${kind.toLowerCase()} in your account ledger.`}</p>
-			<footer className="border-t border-[#d8d9ce] pt-3 text-xs text-slate-600">Computer-generated record from Aurevia Invest. Internal simulation only.</footer>
+			<div className="px-5 pb-6 pt-6 sm:px-7 sm:pb-7">
+				<div className="flex flex-col items-center text-center">
+					<div className="grid size-16 place-items-center rounded-full bg-emerald-100 text-emerald-800 ring-4 ring-emerald-50"><Landmark size={27} strokeWidth={1.8}/></div>
+					<p className="mt-3 max-w-full break-words text-base font-semibold">{recipientName}</p>
+					<p className="mt-1 max-w-full break-all text-sm text-slate-500">{recipientNumber}</p>
+					<p className="mt-6 break-words text-3xl font-bold tracking-tight tabular-nums sm:text-4xl">{amountLabel(currentReceipt.amount,currentReceipt.currency,isWithdrawal)}</p>
+					<div className={`mt-4 inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold ${isSuccessful?'bg-emerald-50 text-emerald-800':isFailed?'bg-rose-50 text-rose-700':'bg-amber-50 text-amber-800'}`}>
+						<span className={`size-2 rounded-full ${isSuccessful?'bg-emerald-500':isFailed?'bg-rose-500':'bg-amber-500'}`} aria-hidden="true"/>
+						{isSuccessful&&<Check size={14}/>}
+						<span>{statusLabel}</span>
+					</div>
+					<p className="mt-2 text-xs text-slate-500">{dateLabel(currentReceipt.createdAt)}</p>
+				</div>
+
+				<section className="mt-6 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5" aria-label="Transaction details">
+					<h3 className="text-sm font-semibold text-slate-900">Transfer details</h3>
+					<dl className="mt-3 divide-y divide-slate-200/80">
+						<ReceiptRow label="Source" value={`${sourceName} · ${sourceNumber}`}/>
+						<div className="flex min-w-0 items-start justify-between gap-4 py-3 text-sm"><dt className="shrink-0 text-slate-500">Destination</dt><dd className="flex min-w-0 items-center gap-2 text-right font-medium text-slate-800"><span className="grid size-8 shrink-0 place-items-center rounded-full bg-emerald-100 text-xs font-bold text-emerald-800" aria-hidden="true">A</span><span className="min-w-0"><span className="block break-words">{destinationName}</span><span className="block break-all text-xs font-normal text-slate-500">{destinationNumber}</span></span></dd></div>
+						<ReceiptRow label="Purpose" value={purpose}/>
+						<ReceiptRow label="Transfer method" value={currentReceipt.method}/>
+						<ReceiptRow label="Transaction fee" value={currentReceipt.fee===null||currentReceipt.fee===undefined?'Not recorded':amountLabel(currentReceipt.fee,currentReceipt.currency,false)}/>
+						<ReceiptRow label="Gateway" value={currentReceipt.gateway||'AureviaPay · simulated'}/>
+					</dl>
+					<details className="group border-t border-slate-200/80">
+						<summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 py-3 text-sm font-semibold text-slate-800 [&::-webkit-details-marker]:hidden">
+							<span>Transaction details</span><ChevronDown size={16} className="shrink-0 text-slate-500 transition group-open:rotate-180"/>
+						</summary>
+						<dl className="grid gap-x-5 gap-y-3 border-t border-slate-200/80 pb-2 pt-3 sm:grid-cols-2">
+							<ReceiptRow label="Reference ID" value={currentReceipt.reference}/>
+							<ReceiptRow label="Transaction type" value={kind.replaceAll('_',' ')}/>
+							{currentReceipt.accountMode&&<ReceiptRow label="Account" value={`${currentReceipt.accountMode} simulated account`}/>}
+							{currentReceipt.accountReference&&<ReceiptRow label="Wallet reference" value={currentReceipt.accountReference}/>}
+							{currentReceipt.externalReference&&<ReceiptRow label="User reference" value={currentReceipt.externalReference}/>}
+							{currentReceipt.reviewedAt&&<ReceiptRow label="Reviewed" value={dateLabel(currentReceipt.reviewedAt)}/>}
+							{currentReceipt.completedAt&&<ReceiptRow label="Completed" value={dateLabel(currentReceipt.completedAt)}/>}
+							{currentReceipt.reviewedBy?.name&&<ReceiptRow label="Reviewed by" value={currentReceipt.reviewedBy.name}/>}
+							{currentReceipt.previousBalance!==null&&currentReceipt.previousBalance!==undefined&&<ReceiptRow label="Previous balance" value={amountLabel(currentReceipt.previousBalance,currentReceipt.currency,false)}/>}
+							{currentReceipt.resultingBalance!==null&&currentReceipt.resultingBalance!==undefined&&<ReceiptRow label="Resulting balance" value={amountLabel(currentReceipt.resultingBalance,currentReceipt.currency,false)}/>}
+							{currentReceipt.adminNote&&<ReceiptRow label="Review note" value={currentReceipt.adminNote}/>}
+						</dl>
+					</details>
+				</section>
+				{currentReceipt.simulated&&<p className="mt-4 rounded-xl bg-emerald-50 px-3 py-2.5 text-xs leading-5 text-emerald-900">Simulated internal ledger record only. No external payment, bank transfer, held asset, or payout occurred.</p>}
+				<footer className="mt-5 border-t border-slate-100 pt-4 text-center text-xs leading-5 text-slate-500">Aurevia Invest · AureviaPay simulated transaction record</footer>
 			</div>
 		</article>
-		<div className="flex flex-wrap gap-2"><button type="button" className="btn min-h-10 bg-white/5" disabled={busy} onClick={()=>void exportReceipt('png')}><Download size={14}/>{busy?'Preparing…':'Download PNG'}</button><button type="button" className="btn min-h-10 bg-white/5" disabled={busy} onClick={()=>void exportReceipt('pdf')}><Download size={14}/>{busy?'Preparing…':'Download PDF'}</button></div>
-		{error&&<p className="text-sm text-loss" role="alert">{error}</p>}
+		<div className="flex flex-wrap gap-2">
+			<button type="button" className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm disabled:opacity-60" disabled={busy} onClick={()=>void exportReceipt('png')}><Download size={14}/>{busy?'Preparing…':'Download PNG'}</button>
+			<button type="button" className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm disabled:opacity-60" disabled={busy} onClick={()=>void exportReceipt('pdf')}><Download size={14}/>{busy?'Preparing…':'Download PDF'}</button>
+		</div>
+		{error&&<p className="text-sm text-rose-700" role="alert">{error}</p>}
 	</div>;
 }
+
+function ReceiptRow({label,value}:{label:string;value:string}){return <div className="flex min-w-0 items-start justify-between gap-4 py-3 text-sm"><dt className="shrink-0 text-slate-500">{label}</dt><dd className="min-w-0 break-words text-right font-medium text-slate-800">{value||'Not provided'}</dd></div>}
