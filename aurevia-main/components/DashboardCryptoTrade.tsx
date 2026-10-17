@@ -2,6 +2,7 @@
 
 import {FormEvent,useCallback,useEffect,useMemo,useState} from 'react';
 import {ArrowDownRight,ArrowUpRight,LoaderCircle,RefreshCw,TrendingUp} from 'lucide-react';
+import {formatUsd} from '@/lib/currency-format';
 
 type CryptoInstrument={id:string;symbol:string;name:string;baseAsset:string;quoteAsset:string;price:number|string;takerFee:number|string;updatedAt:string;lastUpdatedAt?:string};
 type CryptoPosition={side:string;quantity:number|string;instrument:{id:string}};
@@ -71,7 +72,7 @@ export default function DashboardCryptoTrade({accountMode,cash,onTradeComplete}:
   {loading?<div className="crypto-trade-loading" role="status"><LoaderCircle size={16} className="animate-spin"/>Loading simulated prices</div>:!instruments.length?<div className="dashboard-empty"><div><b>No simulated crypto instruments available</b><p>Check back when crypto markets are enabled.</p></div></div>:<form className="crypto-trade-form" onSubmit={submit}>
    <div className="crypto-trade-market"><label>Crypto<select className="input" value={selectedId} onChange={event=>setSelectedId(event.target.value)}>{instruments.map(item=><option key={item.id} value={item.id}>{item.baseAsset}/USD · {item.name}</option>)}</select></label><div><span>Simulated price</span><b>{selected?priceFormat.format(Number(selected.price)):'--'}</b></div></div>
    <div className="crypto-trade-controls"><div className="crypto-trade-side" role="group" aria-label="Trade side"><button type="button" className={side==='BUY'?'is-active':''} aria-pressed={side==='BUY'} onClick={()=>setSide('BUY')}><ArrowUpRight size={14}/>Buy</button><button type="button" className={side==='SELL'?'is-active is-sell':''} aria-pressed={side==='SELL'} onClick={()=>setSide('SELL')}><ArrowDownRight size={14}/>Sell</button></div><label>Quantity ({selected?.baseAsset||'crypto'})<input className="input" type="number" min="0.00000001" step="any" max={side==='SELL'?heldQuantity:undefined} value={quantity} onChange={event=>setQuantity(event.target.value)} inputMode="decimal" required/></label></div>
-   <div className="crypto-trade-summary"><span>{accountMode} cash <b>{priceFormat.format(availableCash)}</b></span><span>Held <b>{heldQuantity.toLocaleString('en-US',{maximumFractionDigits:8})} {selected?.baseAsset||''}</b></span><span>Est. fee <b>{priceFormat.format(fee)}</b></span><span>{side==='BUY'?'Est. total':'Est. proceeds'} <b>{priceFormat.format(side==='BUY'?notional+fee:notional)}</b></span></div>
+   <div className="crypto-trade-summary"><span>{accountMode} cash <b>{formatUsd(availableCash)}</b></span><span>Held <b>{heldQuantity.toLocaleString('en-US',{maximumFractionDigits:8})} {selected?.baseAsset||''}</b></span><span>Est. fee <b>{formatUsd(fee)}</b></span><span>{side==='BUY'?'Est. total':'Est. proceeds'} <b>{formatUsd(side==='BUY'?notional+fee:notional)}</b></span></div>
    {exceedsCash&&<p className="crypto-trade-error" role="status">Not enough {accountMode} simulated cash for this order and estimated fee.</p>}
    {exceedsPosition&&<p className="crypto-trade-error" role="status">You can sell up to your held {accountMode} quantity.</p>}
    {error&&<p className="crypto-trade-error" role="alert">{error}</p>}

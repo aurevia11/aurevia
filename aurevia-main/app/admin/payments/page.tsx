@@ -4,10 +4,11 @@ import {useEffect,useMemo,useState} from 'react';
 import Link from 'next/link';
 import {ArrowLeft,Check,ExternalLink,RefreshCw,X} from 'lucide-react';
 import AdminNav from '@/components/AdminNav';
+import {formatUsd} from '@/lib/currency-format';
 
 type Funding={id:string;user:{email:string;name:string|null};type:'DEPOSIT'|'WITHDRAWAL';accountMode:'DEMO'|'REAL';method:string;amount:string|number;currency:string;status:string;createdAt:string;reviewedAt:string|null;settledAt:string|null;settlementReference:string|null;transactionReference:string|null;note:string|null;adminNote:string|null;hasReceipt:boolean};
 type Decision='APPROVED'|'REJECTED'|'REQUEST_INFO';
-const amount=(value:string|number,currency:string)=>`${Number(value).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:8})} ${currency}`;
+const amount=(value:string|number,currency:string)=>currency.toUpperCase()==='USD'?formatUsd(value):`${Number(value).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:8})} ${currency}`;
 
 export default function AdminPayments(){
 	const [queue,setQueue]=useState<Funding[]>([]);

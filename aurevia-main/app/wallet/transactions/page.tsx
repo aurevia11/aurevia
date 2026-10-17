@@ -6,13 +6,14 @@ import {useSession} from 'next-auth/react';
 import {ArrowDownLeft,ArrowLeft,ArrowUpRight,RefreshCw,WalletCards} from 'lucide-react';
 import Nav from '@/components/Nav';
 import DisplayCurrencyPanel from '@/components/DisplayCurrencyPanel';
+import {formatUsd} from '@/lib/currency-format';
 
 type FundingRecord={id:string;type:'DEPOSIT'|'WITHDRAWAL';method:string;amount:string|number;currency:string;status:string;accountMode:'DEMO'|'REAL';createdAt:string;updatedAt:string};
 type WalletData={accountMode:'DEMO'|'REAL';transactions:FundingRecord[]};
 type Filter='ALL'|'DEPOSIT'|'WITHDRAWAL';
 
 const statusLabels:Record<string,string>={PENDING:'Pending',PENDING_REVIEW:'Pending review',PROCESSING:'Processing',APPROVED:'Approved',COMPLETED:'Completed',REJECTED:'Rejected',CANCELLED:'Cancelled'};
-const money=(value:string|number,currency:string)=>`${Number(value).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:8})} ${currency}`;
+const money=(value:string|number,currency:string)=>currency.toUpperCase()==='USD'?formatUsd(value):`${Number(value).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:8})} ${currency}`;
 
 export default function TransactionsPage(){
 	const {data:session,status:sessionStatus}=useSession();

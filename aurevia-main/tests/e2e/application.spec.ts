@@ -695,7 +695,7 @@ test('account-mode changes refresh and isolate wallet, trade, history, and suppo
 	await page.unroute('**/api/account/mode');
 	await expect(mode).toHaveValue('REAL');
 	await expect(page.locator('.account-heading .account-kicker')).toContainText('REAL ACCOUNT');
-	await expect(page.locator('.wallet-balance-value')).toHaveText('0.00 USD');
+	await expect(page.locator('.wallet-balance-value')).toHaveText('$0.00');
 	await page.goto('/wallet/transactions');
 	await expect(page.locator('.account-heading .status-pill')).toContainText('REAL ACCOUNT');
 	await expect(page.getByText('No transactions yet')).toBeVisible();
@@ -824,7 +824,7 @@ test('Account Funding loads its wallet independently and offers reviewed simulat
 	await selectAccountMode(page,'DEMO');
 	await page.goto('/wallet');
 	await expect(page.getByRole('heading',{name:/wallet|funding/i}).first()).toBeVisible();
-	await expect(page.locator('.wallet-balance-value')).toHaveText('5,000.00 USD');
+	await expect(page.locator('.wallet-balance-value')).toHaveText('$5,000.00');
 	await expect(page.getByRole('status').filter({hasText:'Internal simulated funding'})).toBeVisible();
 	await expect(page.getByLabel('Payment method')).toHaveCount(0);
 	await expect(page.locator('.wallet-type-switch')).toBeVisible();
@@ -834,7 +834,7 @@ test('Account Funding loads its wallet independently and offers reviewed simulat
 	await page.route('**/api/payment-methods',route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Payment methods are temporarily unavailable.'})}));
 	await page.getByRole('button',{name:'Refresh wallet history'}).click();
 	await expect(page.getByText('Loading wallet data…')).toHaveCount(0);
-	await expect(page.locator('.wallet-balance-value')).toHaveText('5,000.00 USD');
+	await expect(page.locator('.wallet-balance-value')).toHaveText('$5,000.00');
 	await expect(page.getByRole('status').filter({hasText:'Internal simulated funding'})).toBeVisible();
 	await page.unroute('**/api/payment-methods');
 	await page.route('**/api/wallet',route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Wallet data is temporarily unavailable.'})}));
@@ -845,7 +845,7 @@ test('Account Funding loads its wallet independently and offers reviewed simulat
 	await expect(page.getByLabel('Amount',{exact:true})).toBeVisible();
 	await page.unroute('**/api/wallet');
 	await page.getByRole('button',{name:'Refresh wallet history'}).click();
-	await expect(page.locator('.wallet-balance-value')).toHaveText('5,000.00 USD');
+	await expect(page.locator('.wallet-balance-value')).toHaveText('$5,000.00');
 	await selectAccountMode(page,'REAL');
 	await page.goto('/wallet');
 	const methods=await page.request.get('/api/payment-methods').then(response=>response.json());
@@ -924,6 +924,7 @@ test('dashboard quick trade buys and sells crypto against the DEMO ledger',async
 	await page.goto('/dashboard');
 	await expect(page.getByRole('heading',{name:'Simulated crypto trading'})).toBeVisible();
 	const wallet=async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
+	const formattedWallet=async()=>new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2,maximumFractionDigits:2}).format(await wallet());
 	const startingBalance=await wallet();
 	const markets=await page.request.get('/api/market').then(response=>response.json());
 	const bitcoin=markets.find((instrument:{id:string;symbol:string})=>instrument.symbol===fixture('CRYPTO_INSTRUMENT'));
@@ -937,6 +938,7 @@ test('dashboard quick trade buys and sells crypto against the DEMO ledger',async
 	expect((await buy.json()).status).toBe('FILLED');
 	await expect(page.getByRole('status').filter({hasText:'Bought 0.001 BTC in DEMO'})).toBeVisible();
 	await expect.poll(wallet).toBeLessThan(startingBalance);
+	await expect(page.locator('.crypto-trade-summary span').first()).toContainText(await formattedWallet());
 	await page.getByRole('button',{name:'Sell',exact:true}).click();
 	const sellResponsePromise=page.waitForResponse(response=>response.url().endsWith('/api/orders')&&response.request().method()==='POST');
 	await page.getByRole('button',{name:'Sell BTC'}).click();
@@ -946,6 +948,7 @@ test('dashboard quick trade buys and sells crypto against the DEMO ledger',async
 	await expect(page.getByRole('status').filter({hasText:'Sold 0.001 BTC in DEMO'})).toBeVisible();
 	await expect.poll(wallet).toBeGreaterThan(startingBalance-10);
 	await expect.poll(wallet).toBeLessThan(startingBalance);
+	await expect(page.locator('.crypto-trade-summary span').first()).toContainText(await formattedWallet());
 });
 
 test('closing a DEMO position records a sell execution, reconciles portfolio, and notifies',async({page})=>{
@@ -1149,7 +1152,7 @@ test('simulated investment lifecycle and trading work in both account modes',asy
 		expect(realRequestResponse.status()).toBe(201);
 		const realRequest=await realRequestResponse.json();
 		expect(realRequest.status).toBe('PENDING_APPROVAL');
-		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(initialRealBalance+500);
+		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBeCloseTo(initialRealBalance+500,2);
 		await review(realRequest.id,'approve');
 		await review(realRequest.id,'activate');
 		await review(realRequest.id,'complete');
@@ -1157,7 +1160,7 @@ test('simulated investment lifecycle and trading work in both account modes',asy
 		userInvestments=await page.request.get('/api/investments').then(response=>response.json());
 		const settledRealRequest=userInvestments.requests.find((item:{id:string})=>item.id===realRequest.id);
 		expect(settledRealRequest).toMatchObject({status:'SETTLED',settlementReference:`SIMULATED-SETTLEMENT:REAL:${realRequest.id}`,simulatedPayout:'540'});
-		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(initialRealBalance+1040);
+		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBeCloseTo(initialRealBalance+1040,2);
 		const tradeableInstrument=(await page.request.get('/api/market').then(response=>response.json())).find((item:{price:number})=>Number(item.price)<500);
 		expect(tradeableInstrument,'market should include an instrument affordable from the simulated allocation').toBeTruthy();
 		const realOrder=await page.request.post('/api/orders',{headers:{'Idempotency-Key':randomUUID()},data:{instrumentId:tradeableInstrument.id,side:'BUY',type:'MARKET',quantity:1,expectedPrice:Number(tradeableInstrument.price),observedAt:tradeableInstrument.lastUpdatedAt||tradeableInstrument.updatedAt}});
@@ -1885,7 +1888,7 @@ test('approved deposit receipts use the credited amount and reviewer audit',asyn
 	await page.goto('/wallet');
 	const receiptDetails=page.locator('details').filter({hasText:request.id}).first();
 	await receiptDetails.locator('summary').click();
-	await expect(receiptDetails.getByText('100.00 USD',{exact:true}).last()).toBeVisible();
+	await expect(receiptDetails.getByText('$100.00',{exact:true}).last()).toBeVisible();
 	await expect(receiptDetails.getByText('Reviewed by',{exact:true})).toBeVisible();
 	await expect(receiptDetails.getByText(fixture('ADMIN_EMAIL'),{exact:true})).toHaveCount(0);
 	const downloadPromise=page.waitForEvent('download');

@@ -6,6 +6,7 @@ import {Activity,ArrowUpRight,Building2,CircleDollarSign,Landmark,ReceiptText,Re
 import Nav from '@/components/Nav';
 import DisplayCurrencyPanel from '@/components/DisplayCurrencyPanel';
 import {activityCategoryLabel,type ActivityCategory,type ActivityRecord} from '@/lib/activity';
+import {formatUsd} from '@/lib/currency-format';
 
 const categories:ActivityCategory[]=['all','trade','personal-trade','investment','deposit','withdrawal','order','position','account','security'];
 const categoryIcons:Record<ActivityCategory,typeof Activity>={all:Activity,trade:TrendingUp,'personal-trade':Activity,investment:Building2,deposit:CircleDollarSign,withdrawal:WalletCards,order:ReceiptText,position:Landmark,account:ShieldCheck,security:ShieldCheck};
@@ -49,7 +50,11 @@ export default function AccountActivityExperience(){
 function ActivityRow({item}:{item:ActivityRecord}){
   const Icon=activityIcon(item.category);
   const positive=item.pnl!==null&&Number(item.pnl)>=0;
-  return <article className="activity-feed-row"><span className={`activity-icon activity-${item.category}`}><Icon size={16} aria-hidden="true"/></span><div className="activity-feed-main"><div><b>{item.action}</b><span>{item.asset}</span>{item.side&&<em>{item.side}</em>}{item.adminInitiated&&<small>ADMIN-INITIATED</small>}</div><p>{item.sourceLabel} · {statusLabel(item.status)}</p><details><summary>Details</summary><dl><Detail label="Amount" value={item.amount}/><Detail label="Quantity" value={item.quantity}/><Detail label="Price" value={item.price||'—'}/><Detail label="Status" value={item.status}/><Detail label="Source" value={item.sourceLabel}/>{item.pnl!==null&&<Detail label="P/L" value={item.pnl}/>}</dl></details></div><div className="activity-feed-meta"><time dateTime={item.timestamp}>{formatTime(item.timestamp)}</time><b className={positive?'text-profit':item.pnl===null?'':'text-loss'}>{item.pnl===null?'':`${positive?'+':'−'}${item.pnl}`}</b><Link href={item.link} aria-label={`Open ${item.action} details`}><ArrowUpRight size={14}/></Link></div></article>;
+  const isUsdActivity=item.source!=='ledger'||item.asset==='USD';
+  const amount=isUsdActivity?formatUsd(item.amount):`${item.amount} ${item.asset}`;
+  const price=item.price===null?'—':isUsdActivity?formatUsd(item.price):item.price;
+  const pnl=item.pnl===null?null:formatUsd(Math.abs(Number(item.pnl)));
+  return <article className="activity-feed-row"><span className={`activity-icon activity-${item.category}`}><Icon size={16} aria-hidden="true"/></span><div className="activity-feed-main"><div><b>{item.action}</b><span>{item.asset}</span>{item.side&&<em>{item.side}</em>}{item.adminInitiated&&<small>ADMIN-INITIATED</small>}</div><p>{item.sourceLabel} · {statusLabel(item.status)}</p><details><summary>Details</summary><dl><Detail label="Amount" value={amount}/><Detail label="Quantity" value={item.quantity}/><Detail label="Price" value={price}/><Detail label="Status" value={item.status}/><Detail label="Source" value={item.sourceLabel}/>{pnl!==null&&<Detail label="P/L" value={pnl}/>}</dl></details></div><div className="activity-feed-meta"><time dateTime={item.timestamp}>{formatTime(item.timestamp)}</time><b className={positive?'text-profit':item.pnl===null?'':'text-loss'}>{pnl===null?'':`${positive?'+':'−'}${pnl}`}</b><Link href={item.link} aria-label={`Open ${item.action} details`}><ArrowUpRight size={14}/></Link></div></article>;
 }
 
 function Detail({label,value}:{label:string;value:string}){return <div><dt>{label}</dt><dd>{value}</dd></div>}

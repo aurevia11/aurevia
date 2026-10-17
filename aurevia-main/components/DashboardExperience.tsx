@@ -10,12 +10,13 @@ import DashboardCryptoTrade from '@/components/DashboardCryptoTrade';
 import DisplayCurrencyPanel from '@/components/DisplayCurrencyPanel';
 import {useQuery} from '@tanstack/react-query';
 import {useLocale} from '@/lib/i18n-context';
+import {formatUsd} from '@/lib/currency-format';
 
 type DashboardData={accountMode:'DEMO'|'REAL';cash:string|null;financialDataAvailable:boolean;positionValue:string;invested:string;unrealized:string;portfolioValue:string|null;openOrders:number;activePositions:number;activity:Array<{id:string;category:string;action:string;timestamp:string;asset:string;amount:string;status:string;source:string;pnl:string|null;adminInitiated:boolean;link:string}>;orders:Array<{id:string;side:string;type:string;status:string;accountMode:'DEMO'|'REAL';quantity:string;filledQuantity:string;price:string|null;createdAt:string;instrument:{symbol:string;name:string}}>;positions:Array<{id:string;side:string;quantity:string;entryPrice:string;instrument:{symbol:string;name:string;price:string}}> ;investments:Array<{id:string;status:string;amount:string;opportunity:{title:string;category:string;riskLevel:string;assetSymbol:string|null;targetReturnPercent:string|null;durationDays:number}}> ;notifications:Array<{id:string;type:string;title:string;message:string;isRead:boolean;createdAt:string;actionUrl:string|null}>;profile:{id:string;email:string|null;name:string|null;hasAvatar:boolean;role:'USER'|'ADMIN';status:string|null;accountMode:'DEMO'|'REAL';kycStatus:string|null;verifiedAt:string|null;verifiedChannel:string|null;phoneVerified:boolean;phone:string|null;country:string|null;createdAt:string|null;tier:string;progress:number;eligibleForRealTrading:boolean;verified:boolean;withdrawalEnabled?:boolean;accountRestricted?:boolean;restrictionReason?:string|null};marketInstruments:Array<{id:string;symbol:string;name:string;price:number;changePercent:number;updatedAt:string}>};
 
 type MarketQuote={asset:{id:string;name:string;currency:string};price:number;changePercent:number;updatedAt:string;isStale?:boolean;staleReason?:string};
 
-const money=(locale:string,value:string|null)=>value===null?'—':new Intl.NumberFormat(locale,{style:'currency',currency:'USD',minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(value));
+const money=(locale:string,value:string|null)=>value===null?'—':formatUsd(value,locale);
 const signed=(locale:string,value:string)=>{const n=Number(value);return `${n>=0?'+':''}${money(locale,value)}`};
 
 export default function DashboardExperience(){

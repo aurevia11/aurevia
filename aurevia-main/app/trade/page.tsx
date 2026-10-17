@@ -6,6 +6,7 @@ import { useLocale } from "@/lib/i18n-context";
 import PriceChart from "@/components/PriceChart";
 import { useTradingStore } from "@/lib/store";
 import { RefreshCw } from "lucide-react";
+import { formatUsd } from "@/lib/currency-format";
 type I = { id: string; symbol: string; price: number; change?: number; takerFee?: number; leverage?: number; updatedAt?:string; lastUpdatedAt?:string };
 type NumericValue=number|string;
 type Order = {
@@ -284,7 +285,7 @@ export default function Trade() {
               <label className="account-label">{translate('orderType')}<select className="input" required value={type} onChange={(event) => setType(event.target.value as "MARKET"|"LIMIT"|"STOP")}><option value="MARKET">Market</option><option value="LIMIT">Limit</option><option value="STOP">Stop</option></select></label>
               <label className="account-label">{translate('quantity')}<input className="input" type="number" min="0.00000001" step="any" inputMode="decimal" required value={qty} onChange={(event) => setQty(event.target.value)} placeholder="0.00"/></label>
               {type !== "MARKET" && <label className="account-label">{type === "STOP" ? translate('stopPrice') : translate('limitPrice')}<input className="input" type="number" min="0.00000001" step="any" inputMode="decimal" required value={price} onChange={(event) => setPrice(event.target.value)} placeholder="0.00"/></label>}
-              <div className="trade-estimate" aria-live="polite"><div><span>Available simulated {accountMode} balance</span><b>{availableBalance===null?"Loading…":`$${availableBalance.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`}</b></div><div><span>{translate('estimatedRequiredCash')}</span><b>{cur?`$${estimatedRequiredCash.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`:"—"}</b></div><div><span>{translate('estimatedFee')}</span><b>{cur?.takerFee===undefined?"Not configured":`$${estimatedFee.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})}`}</b></div></div>
+              <div className="trade-estimate" aria-live="polite"><div><span>Available simulated {accountMode} balance</span><b>{availableBalance===null?"Loading…":formatUsd(availableBalance)}</b></div><div><span>{translate('estimatedRequiredCash')}</span><b>{cur?formatUsd(estimatedRequiredCash):"—"}</b></div><div><span>{translate('estimatedFee')}</span><b>{cur?.takerFee===undefined?"Not configured":formatUsd(estimatedFee)}</b></div></div>
               <p className="trade-estimate-note">Orders use simulated execution and do not reach an external broker or exchange.</p>
               <button type="submit" disabled={placing||!selected} className="btn w-full bg-gold text-black disabled:opacity-50">{placing?translate('submittingOrder'):translate('placeOrder',{side})}</button>
               </fieldset>

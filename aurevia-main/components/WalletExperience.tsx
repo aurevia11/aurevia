@@ -9,6 +9,7 @@ import Nav from '@/components/Nav';
 import ReceiptGenerator from '@/components/ReceiptGenerator';
 import {useLocale} from '@/lib/i18n-context';
 import {SUPPORTED_CURRENCIES} from '@/lib/config/simulation';
+import {formatUsd} from '@/lib/currency-format';
 import QRCode from 'qrcode';
 
 type PaymentMethod={id:string;name:string;currencies:string[];destination:string|null;instructions:string|null;minimumAmount:string|number;maximumAmount:string|number|null;depositEnabled:boolean;withdrawalEnabled:boolean;requiresNetwork:boolean;demoOnly:boolean};
@@ -19,7 +20,7 @@ type CurrencyRate={rate:number|string|null;source:string|null;observedAt:string|
 type PaymentMethodsResponse={methods:PaymentMethod[];fundingStatus:'SIMULATED'|'DEMO'|'AVAILABLE'|'MANUAL_REVIEW'|'NOT_CONFIGURED'|'DISABLED'|'ERROR';simulationAvailable?:boolean;supportedCurrencies?:readonly string[];simulatedBitcoinAddress?:string|null;realFundingAvailable:boolean;realWithdrawalAvailable:boolean;manualDepositReviewAvailable:boolean};
 type KycData={kycStatus:string;documents:number;verificationProfileSubmitted:boolean;depositEnabled:boolean;withdrawalEnabled:boolean;accountRestricted:boolean;restrictionReason:string|null;canWithdraw?:boolean};
 
-const money=(amount:number,currency='USD')=>`${amount.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:8})} ${currency}`;
+const money=(amount:number,currency='USD')=>currency==='USD'?formatUsd(amount):`${amount.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:8})} ${currency}`;
 const statuses:Record<string,string>={PENDING:'Pending',PENDING_REVIEW:'Pending review',PROCESSING:'Processing',APPROVED:'Approved · reserved',COMPLETED:'Completed',FAILED:'Failed · reservation released',REVERSED:'Reversed',REJECTED:'Rejected',CANCELLED:'Cancelled'};
 const reserves=['PENDING','PENDING_REVIEW','APPROVED','PROCESSING'];
 const formatFundingMethodLabel=(method:string)=>{

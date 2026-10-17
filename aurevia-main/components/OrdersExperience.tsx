@@ -5,11 +5,12 @@ import {useSession} from 'next-auth/react';
 import {RefreshCw,X} from 'lucide-react';
 import Nav from '@/components/Nav';
 import {useLocale} from '@/lib/i18n-context';
+import {formatUsd} from '@/lib/currency-format';
 
 type Order={id:string;side:string;type:string;status:string;accountMode:'DEMO'|'REAL';quantity:string;filledQuantity:string;price:string|null;stopPrice:string|null;averageFillPrice:string|null;fee:string;createdAt:string;instrument:{symbol:string;name:string};executions:Array<{quantity:string;price:string;fee:string;createdAt:string}>};
 type Filter='ALL'|'OPEN'|'FILLED'|'CANCELLED'|'REJECTED';
 const filters:Filter[]=['ALL','OPEN','FILLED','CANCELLED','REJECTED'];
-const money=(value:string|null|undefined)=>value===null||value===undefined?'Market':`$${Number(value).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:4})}`;
+const money=(value:string|null|undefined)=>value===null||value===undefined?'Market':formatUsd(value);
 
 export default function OrdersExperience(){
  const {data:session}=useSession();

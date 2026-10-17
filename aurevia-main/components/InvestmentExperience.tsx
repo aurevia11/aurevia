@@ -4,12 +4,13 @@ import {FormEvent,useCallback,useEffect,useState} from 'react';
 import {ArrowUpRight,RefreshCw,ShieldCheck} from 'lucide-react';
 import Nav from '@/components/Nav';
 import {useLocale} from '@/lib/i18n-context';
+import {formatUsd} from '@/lib/currency-format';
 
 type Opportunity={id:string;title:string;category:string;description:string;assetSymbol:string|null;minimumAmount:string;maximumAmount:string|null;targetReturnPercent:string|null;durationDays:number;startsAt:string|null;maturesAt:string|null;riskLevel:string;status:string;demoEligible:boolean;realEligible:boolean;requiresApproval:boolean;targetPrice:string|null;stopPrice:string|null};
 type Request={id:string;opportunityId:string;accountMode:'DEMO'|'REAL';amount:string;status:string;requestedAt:string;activatedAt:string|null;maturesAt:string|null;settlementReference:string|null;simulatedPayout:string|null;opportunity:{title:string;category:string;riskLevel:string;targetReturnPercent:string|null;durationDays:number}};
 type Payload={accountMode:'DEMO'|'REAL';availableBalance:string;opportunities:Opportunity[];requests:Request[]};
 
-function amount(value:string|number|null|undefined,notSet:string){return value===null||value===undefined?notSet:`$${Number(value).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`;}
+function amount(value:string|number|null|undefined,notSet:string){return value===null||value===undefined?notSet:formatUsd(value);}
 function statusText(value:string){return value.replaceAll('_',' ');}
 function dateText(value:string|null,notSet:string){return value?new Date(value).toLocaleDateString():notSet;}
 

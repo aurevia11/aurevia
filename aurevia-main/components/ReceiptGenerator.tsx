@@ -4,6 +4,7 @@ import {useEffect,useRef,useState} from 'react';
 import {Check,ChevronDown,Download,Landmark,X} from 'lucide-react';
 import html2canvas from 'html2canvas';
 import {jsPDF} from 'jspdf';
+import {formatUsd} from '@/lib/currency-format';
 
 export type ReceiptData={
 	id:string;
@@ -103,7 +104,7 @@ const dateLabel=(value:string)=>{
 const amountLabel=(value:number|string,currency:string,isWithdrawal:boolean)=>{
 	const amount=Number(value);
 	if(!Number.isFinite(amount))return '—';
-	const formatted=`${Math.abs(amount).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:8})} ${currency}`;
+	const formatted=currency==='USD'?formatUsd(Math.abs(amount)):`${Math.abs(amount).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:8})} ${currency}`;
 	return isWithdrawal?`-${formatted}`:formatted;
 };
 

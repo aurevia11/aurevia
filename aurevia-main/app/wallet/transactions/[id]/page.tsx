@@ -6,6 +6,7 @@ import {useParams} from 'next/navigation';
 import {ArrowLeft,Clock3,FileClock,ShieldCheck} from 'lucide-react';
 import Nav from '@/components/Nav';
 import DisplayCurrencyPanel from '@/components/DisplayCurrencyPanel';
+import {formatUsd} from '@/lib/currency-format';
 
 type FundingTransaction={
 	id:string;
@@ -29,7 +30,7 @@ type Detail={transaction:FundingTransaction;history:Array<{action:string;created
 
 const labels:Record<string,string>={PENDING:'Pending',PENDING_REVIEW:'Pending review',PROCESSING:'Processing',APPROVED:'Approved',COMPLETED:'Completed',REJECTED:'Rejected',CANCELLED:'Cancelled'};
 const formatDate=(value?:string|null)=>value?new Date(value).toLocaleString():'Not recorded';
-const formatAmount=(value:string|number,currency:string)=>`${Number(value).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:8})} ${currency}`;
+const formatAmount=(value:string|number,currency:string)=>currency.toUpperCase()==='USD'?formatUsd(value):`${Number(value).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:8})} ${currency}`;
 
 export default function TransactionDetailPage(){
 	const {id}=useParams<{id:string}>();
