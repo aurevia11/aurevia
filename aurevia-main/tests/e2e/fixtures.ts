@@ -3,6 +3,13 @@ import {randomInt} from 'node:crypto';
 
 type RuntimeCapture={consoleErrors:string[];pageErrors:string[];failedRequests:string[];failedResponses:Array<{url:string;status:number}>};
 const appOrigin='http://127.0.0.1:4310';
+const credentialCallback='**/api/auth/callback/credentials**';
+let loginSequence=0;
+
+function isolatedLoginIp(){
+	loginSequence+=1;
+	return `198.18.${Math.floor(loginSequence/256)}.${loginSequence%256||1}`;
+}
 
 export const test=base;
 export {expect};
@@ -13,13 +20,26 @@ export async function waitForStartup(page:Page){
 }
 
 export async function loginAs(page:Page,email:string,password:string){
-	await page.goto('/login');
-	await waitForStartup(page);
-	await page.getByLabel('Email or administrator username').fill(email);
-	await page.getByLabel('Password',{exact:true}).fill(password);
-	await page.getByRole('checkbox',{name:/Replace the active Aurevia session/}).check();
-	await page.getByRole('button',{name:'Sign in'}).click();
-	await page.waitForURL(/dashboard/);
+	const loginIp=isolatedLoginIp();
+	const addIsolatedLoginIp=(route:import('@playwright/test').Route)=>route.continue({headers:{...route.request().headers(),'x-forwarded-for':loginIp}});
+	await page.route(credentialCallback,addIsolatedLoginIp);
+	try{
+		await page.goto('/login');
+		await waitForStartup(page);
+		await page.getByLabel('Email or administrator username').fill(email);
+		await page.getByLabel('Password',{exact:true}).fill(password);
+		await page.getByRole('checkbox',{name:/Replace the active Aurevia session/}).check();
+		await page.getByRole('button',{name:'Sign in'}).click();
+		await page.waitForURL(/dashboard/);
+		await expect.poll(async()=>{
+			const response=await page.request.get('/api/auth/session');
+			if(!response.ok())return null;
+			const session=await response.json();
+			return typeof session.user?.email==='string'?session.user.email.toLowerCase():null;
+		}).toBe(email.toLowerCase());
+	}finally{
+		await page.unroute(credentialCallback,addIsolatedLoginIp);
+	}
 }
 
 export async function logout(page:Page){
