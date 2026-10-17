@@ -113,6 +113,7 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 	const [busy,setBusy]=useState(false);
 	const [error,setError]=useState('');
 	const [visible,setVisible]=useState(true);
+	const [showDetails,setShowDetails]=useState(false);
 
 	useEffect(()=>{
 		const view=window as ReceiptWindow;
@@ -144,6 +145,7 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 	const isSuccessful=currentReceipt.status==='APPROVED'||currentReceipt.status==='COMPLETED';
 	const isFailed=currentReceipt.status==='REJECTED'||currentReceipt.status==='FAILED'||currentReceipt.status==='CANCELLED';
 	const statusLabel=isSuccessful?'Success':isFailed?'Failed':'Processing';
+	const receiptTitle=kind==='DEPOSIT'?'Deposit':kind==='WITHDRAWAL'?'Withdrawal':kind==='CREDIT'?'Account credit':'Account debit';
 	const recipientName=currentReceipt.recipientName||currentReceipt.destinationName||'Aurevia-Xchange Inc.';
 	const recipientNumber=currentReceipt.recipientNumber||currentReceipt.destinationNumber||'Not provided';
 	const sourceName=currentReceipt.sourceName||'My Wallet';
@@ -173,7 +175,7 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 	if(!visible)return <button type="button" className="min-h-10 rounded-lg border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm" onClick={()=>setVisible(true)}>View transaction receipt</button>;
 
 	return <div className="grid min-w-0 gap-3">
-		<article ref={receiptRef} className="w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-white text-slate-900 shadow-lg shadow-slate-900/5" aria-label={`${statusLabel} transaction receipt`}>
+		<article ref={receiptRef} className="w-full max-w-xl overflow-hidden rounded-3xl border border-slate-200 bg-white text-slate-900 shadow-lg shadow-slate-900/5" aria-label={`${receiptTitle} ${currentReceipt.status.toLowerCase().replaceAll('_',' ')} receipt`}>
 			<header className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4 sm:px-7">
 				<h2 className="text-base font-semibold tracking-tight sm:text-lg">Bank transfer to</h2>
 				<button type="button" className="grid size-10 shrink-0 place-items-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-slate-900" aria-label="Close receipt" onClick={()=>setVisible(false)}><X size={19}/></button>
@@ -202,11 +204,11 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 						<ReceiptRow label="Transaction fee" value={currentReceipt.fee===null||currentReceipt.fee===undefined?'Not recorded':amountLabel(currentReceipt.fee,currentReceipt.currency,false)}/>
 						<ReceiptRow label="Gateway" value={currentReceipt.gateway||'AureviaPay · simulated'}/>
 					</dl>
-					<details className="group border-t border-slate-200/80">
-						<summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 py-3 text-sm font-semibold text-slate-800 [&::-webkit-details-marker]:hidden">
-							<span>Transaction details</span><ChevronDown size={16} className="shrink-0 text-slate-500 transition group-open:rotate-180"/>
-						</summary>
-						<dl className="grid gap-x-5 gap-y-3 border-t border-slate-200/80 pb-2 pt-3 sm:grid-cols-2">
+					<div className="border-t border-slate-200/80">
+						<button type="button" className="flex min-h-12 w-full cursor-pointer items-center justify-between gap-3 py-3 text-left text-sm font-semibold text-slate-800" aria-expanded={showDetails} aria-controls={`transaction-details-${currentReceipt.id}`} onClick={()=>setShowDetails(value=>!value)}>
+							<span>Transaction details</span><ChevronDown size={16} className={`shrink-0 text-slate-500 transition ${showDetails?'rotate-180':''}`}/>
+						</button>
+						<dl id={`transaction-details-${currentReceipt.id}`} hidden={!showDetails} className="grid gap-x-5 gap-y-3 border-t border-slate-200/80 pb-2 pt-3 sm:grid-cols-2">
 							<ReceiptRow label="Reference ID" value={currentReceipt.reference}/>
 							<ReceiptRow label="Transaction type" value={kind.replaceAll('_',' ')}/>
 							{currentReceipt.accountMode&&<ReceiptRow label="Account" value={`${currentReceipt.accountMode} simulated account`}/>}
@@ -219,9 +221,9 @@ export default function ReceiptGenerator({receipt}:{receipt:ReceiptData}){
 							{currentReceipt.resultingBalance!==null&&currentReceipt.resultingBalance!==undefined&&<ReceiptRow label="Resulting balance" value={amountLabel(currentReceipt.resultingBalance,currentReceipt.currency,false)}/>}
 							{currentReceipt.adminNote&&<ReceiptRow label="Review note" value={currentReceipt.adminNote}/>}
 						</dl>
-					</details>
+					</div>
 				</section>
-				{currentReceipt.simulated&&<p className="mt-4 rounded-xl bg-emerald-50 px-3 py-2.5 text-xs leading-5 text-emerald-900">Simulated internal ledger record only. No external payment, bank transfer, held asset, or payout occurred.</p>}
+				{currentReceipt.simulated&&<p className="mt-4 rounded-xl bg-emerald-50 px-3 py-2.5 text-xs leading-5 text-emerald-900"><strong>SIMULATED INTERNAL LEDGER RECORD</strong> · No external payment, bank transfer, held asset, or payout occurred.</p>}
 				<footer className="mt-5 border-t border-slate-100 pt-4 text-center text-xs leading-5 text-slate-500">Aurevia Invest · AureviaPay simulated transaction record</footer>
 			</div>
 		</article>
