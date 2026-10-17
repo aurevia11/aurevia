@@ -39,7 +39,7 @@ export async function POST(req:Request){
 			await tx.auditLog.create({data:{actorId:admin.id,action:'SIMULATED_WITHDRAWAL_SETTLED',entity:'FUNDING',entityId:current.id,metadata:{accountMode:current.accountMode,type:current.type,amount:current.amount.toString(),currency:current.currency,settlementReference,simulated:true,note:input.note||null}}});
 			await createNotification(tx,{userId:current.userId,type:NotificationType.WITHDRAWAL,title:'Simulated withdrawal completed',message:`Your simulated ${current.accountMode} withdrawal of ${current.amount.toString()} ${current.currency} has been completed in the internal ledger. No external money was paid.`,dedupeKey:`funding:${current.id}:settled`,relatedEntity:'FUNDING',relatedId:current.id,actionUrl:`/wallet/transactions/${current.id}`});
 			return tx.fundingRequest.findUniqueOrThrow({where:{id:current.id}});
-		},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+		},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:5_000,timeout:15_000});
 		const {receiptKey,...safeRequest}=request;
 		return NextResponse.json({...jsonSafe(safeRequest),hasReceipt:!!receiptKey},{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){

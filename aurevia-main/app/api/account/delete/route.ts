@@ -2,7 +2,7 @@ import bcrypt from 'bcryptjs';
 import {NextResponse} from 'next/server';
 import {z,ZodError} from 'zod';
 import {requireUser} from '@/lib/auth';
-import {anonymizeAccount} from '@/lib/account-deletion';
+import {anonymizeAccount,createClosedAccountPasswordHash} from '@/lib/account-deletion';
 import {db} from '@/lib/db';
 import {deletePrivateObject} from '@/lib/private-storage';
 import {rateLimit} from '@/lib/rate-limit';
@@ -17,7 +17,8 @@ export async function POST(request:Request){
 		const current=await db.user.findUnique({where:{id:user.id},select:{passwordHash:true,status:true}});
 		if(!current||current.status!=='ACTIVE')return NextResponse.json({error:'This account is not active.'},{status:409});
 		if(!await bcrypt.compare(input.password,current.passwordHash))return NextResponse.json({error:'Password confirmation failed.'},{status:403});
-		const files=await db.$transaction(tx=>anonymizeAccount(tx,{userId:user.id,actorId:null}),{isolationLevel:'Serializable'});
+		const replacementPasswordHash=await createClosedAccountPasswordHash();
+		const files=await db.$transaction(tx=>anonymizeAccount(tx,{userId:user.id,actorId:null,replacementPasswordHash}),{isolationLevel:'Serializable',maxWait:5_000,timeout:15_000});
 		await Promise.all(files.map(file=>deletePrivateObject(file.area,file.ownerId,file.key)));
 		return new NextResponse(null,{status:204});
 	}catch(error){

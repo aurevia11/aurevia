@@ -5,7 +5,11 @@ import type {PrivateStorageArea} from '@/lib/private-storage';
 
 type PrivateFile={area:PrivateStorageArea;ownerId:string;key:string};
 
-export async function anonymizeAccount(tx:Prisma.TransactionClient,input:{userId:string;actorId:string|null;reason?:string}){
+export async function createClosedAccountPasswordHash(){
+	return bcrypt.hash(randomBytes(32).toString('hex'),12);
+}
+
+export async function anonymizeAccount(tx:Prisma.TransactionClient,input:{userId:string;actorId:string|null;replacementPasswordHash:string;reason?:string}){
 	const current=await tx.user.findUnique({
 		where:{id:input.userId},
 		select:{id:true,role:true,status:true,avatarKey:true,kycDocuments:{select:{storageKey:true}},funding:{select:{receiptKey:true}},supportConversations:{select:{attachmentKey:true}},clientStories:{select:{id:true,imageReference:true}}},
@@ -39,7 +43,7 @@ export async function anonymizeAccount(tx:Prisma.TransactionClient,input:{userId
 	await tx.auditLog.updateMany({where:{entityId:current.id},data:{metadata:Prisma.DbNull}});
 	await tx.user.update({
 		where:{id:current.id},
-		data:{email:`deleted+${current.id}@account.invalid`,passwordHash:await bcrypt.hash(randomBytes(32).toString('hex'),12),name:null,phone:null,phoneVerified:false,phoneVerifiedAt:null,country:null,preferredDisplayCurrency:'USD',status:UserStatus.CLOSED,twoFactorEnabled:false,termsAcceptedAt:null,verifiedAt:null,verifiedChannel:null,requiresRegistrationVerification:false,depositEnabled:false,withdrawalEnabled:false,accountRestricted:true,restrictionReason:'Account closed.',activeSessionId:null,activeSessionUpdatedAt:null,avatarKey:null},
+		data:{email:`deleted+${current.id}@account.invalid`,passwordHash:input.replacementPasswordHash,name:null,phone:null,phoneVerified:false,phoneVerifiedAt:null,country:null,preferredDisplayCurrency:'USD',status:UserStatus.CLOSED,twoFactorEnabled:false,termsAcceptedAt:null,verifiedAt:null,verifiedChannel:null,requiresRegistrationVerification:false,depositEnabled:false,withdrawalEnabled:false,accountRestricted:true,restrictionReason:'Account closed.',activeSessionId:null,activeSessionUpdatedAt:null,avatarKey:null},
 	});
 	await tx.auditLog.create({data:{actorId:input.actorId,action:input.actorId?'ADMIN_ACCOUNT_DELETED':'USER_ACCOUNT_DELETED',entity:'USER',entityId:current.id,metadata:input.reason?{reason:input.reason.slice(0,500)}:undefined}});
 	return privateFiles;

@@ -1,7 +1,7 @@
 import {NextResponse} from 'next/server';
 import {z,ZodError} from 'zod';
 import {requireAdmin} from '@/lib/auth';
-import {anonymizeAccount} from '@/lib/account-deletion';
+import {anonymizeAccount,createClosedAccountPasswordHash} from '@/lib/account-deletion';
 import {db} from '@/lib/db';
 import {deletePrivateObject} from '@/lib/private-storage';
 import {rateLimit} from '@/lib/rate-limit';
@@ -13,7 +13,8 @@ export async function POST(request:Request){
 		const admin=await requireAdmin();
 		rateLimit(`admin-account-delete:${admin.id}`,10,60*60_000);
 		const input=schema.parse(await request.json());
-		const files=await db.$transaction(tx=>anonymizeAccount(tx,{userId:input.userId,actorId:admin.id,reason:input.reason}),{isolationLevel:'Serializable'});
+		const replacementPasswordHash=await createClosedAccountPasswordHash();
+		const files=await db.$transaction(tx=>anonymizeAccount(tx,{userId:input.userId,actorId:admin.id,replacementPasswordHash,reason:input.reason}),{isolationLevel:'Serializable',maxWait:5_000,timeout:15_000});
 		await Promise.all(files.map(file=>deletePrivateObject(file.area,file.ownerId,file.key)));
 		return NextResponse.json({ok:true,userId:input.userId});
 	}catch(error){

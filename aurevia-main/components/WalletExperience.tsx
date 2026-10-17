@@ -16,7 +16,7 @@ type FundingRecord={id:string;type:'DEPOSIT'|'WITHDRAWAL';method:string;amount:n
 type LedgerReceipt={id:string;reference:string;description:string;type:'CREDIT'|'DEBIT';amount:number|string;currency:string;createdAt:string};
 type WalletData={accountMode:'DEMO'|'REAL';balance:number|string|null;balances:Array<{currency:string;balance:number|string}>;transactions:FundingRecord[];adminLedgerReceipts:LedgerReceipt[]};
 type CurrencyRate={rate:number|string|null;source:string|null;observedAt:string|null;status:'CURRENT'|'STALE'|'UNAVAILABLE'};
-type PaymentMethodsResponse={methods:PaymentMethod[];fundingStatus:'SIMULATED'|'DEMO'|'AVAILABLE'|'MANUAL_REVIEW'|'NOT_CONFIGURED'|'DISABLED'|'ERROR';simulationAvailable?:boolean;supportedCurrencies?:readonly string[];realFundingAvailable:boolean;realWithdrawalAvailable:boolean;manualDepositReviewAvailable:boolean};
+type PaymentMethodsResponse={methods:PaymentMethod[];fundingStatus:'SIMULATED'|'DEMO'|'AVAILABLE'|'MANUAL_REVIEW'|'NOT_CONFIGURED'|'DISABLED'|'ERROR';simulationAvailable?:boolean;supportedCurrencies?:readonly string[];simulatedBitcoinAddress?:string|null;realFundingAvailable:boolean;realWithdrawalAvailable:boolean;manualDepositReviewAvailable:boolean};
 type KycData={kycStatus:string;documents:number;verificationProfileSubmitted:boolean;depositEnabled:boolean;withdrawalEnabled:boolean;accountRestricted:boolean;restrictionReason:string|null;canWithdraw?:boolean};
 
 const money=(amount:number,currency='USD')=>`${amount.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:8})} ${currency}`;
@@ -67,6 +67,8 @@ export default function WalletExperience(){
 	const [realFundingAvailable,setRealFundingAvailable]=useState(false);
 	const [realWithdrawalAvailable,setRealWithdrawalAvailable]=useState(false);
 	const [manualDepositReviewAvailable,setManualDepositReviewAvailable]=useState(false);
+	const [simulatedBitcoinAddress,setSimulatedBitcoinAddress]=useState('');
+	const [bitcoinAddressAcknowledged,setBitcoinAddressAcknowledged]=useState(false);
 	const [profile,setProfile]=useState<KycData|null>(null);
 	const [methodLoadError,setMethodLoadError]=useState('');
 	const [profileLoadError,setProfileLoadError]=useState('');
@@ -90,6 +92,7 @@ export default function WalletExperience(){
 	const [submitting,setSubmitting]=useState(false);
 	const [copied,setCopied]=useState(false);
 	const copiedTimer=useRef<number|null>(null);
+	const currencyPreferenceInitialized=useRef(false);
 	const [idempotencyKey,setIdempotencyKey]=useState('');
 	const [keyFingerprint,setKeyFingerprint]=useState('');
 	const [receiptFiles,setReceiptFiles]=useState<Record<string,File|undefined>>({});
@@ -104,7 +107,6 @@ export default function WalletExperience(){
 
 	const availableMethods=useMemo(()=>methods.filter(method=>type==='DEPOSIT'?method.depositEnabled:method.withdrawalEnabled&&(data.accountMode==='DEMO'||realWithdrawalAvailable)),[methods,type,data.accountMode,realWithdrawalAvailable]);
 	const selectedMethod=availableMethods.find(method=>method.id===methodId);
-	const bitcoinMethod=selectedMethod?selectedMethod.currencies.some(item=>item.toUpperCase()==='BTC')||/\bbitcoin\b|\bbtc\b/i.test(selectedMethod.name):false;
 	const manualRealRequest=data.accountMode==='REAL'||data.accountMode==='DEMO';
 	const manualRealDeposit=type==='DEPOSIT'&&manualRealRequest;
 	const manualRealWithdrawal=type==='WITHDRAWAL'&&manualRealRequest;
@@ -138,6 +140,7 @@ export default function WalletExperience(){
 		}
 		if(methodsRequest.status==='fulfilled'&&methodsRequest.value.response.ok&&isPaymentMethodsResponse(methodsRequest.value.result)){
 			setMethods(methodsRequest.value.result.methods);
+			setSimulatedBitcoinAddress(methodsRequest.value.result.simulatedBitcoinAddress||'');
 			setFundingStatus(methodsRequest.value.result.fundingStatus);
 			setRealFundingAvailable(methodsRequest.value.result.realFundingAvailable);
 			setRealWithdrawalAvailable(methodsRequest.value.result.realWithdrawalAvailable);
@@ -145,7 +148,7 @@ export default function WalletExperience(){
 			setMethodLoadError('');
 		}else{
 			const result=methodsRequest.status==='fulfilled'?methodsRequest.value.result as {error?:string}:null;
-			setMethods([]);setFundingStatus('ERROR');setRealFundingAvailable(false);setRealWithdrawalAvailable(false);setManualDepositReviewAvailable(false);
+			setMethods([]);setSimulatedBitcoinAddress('');setFundingStatus('ERROR');setRealFundingAvailable(false);setRealWithdrawalAvailable(false);setManualDepositReviewAvailable(false);
 			setMethodLoadError(result?.error||'Funding options are temporarily unavailable. No funds were changed.');
 		}
 		if(profileRequest.status==='fulfilled'&&profileRequest.value.response.ok&&profileRequest.value.result&&typeof profileRequest.value.result==='object'){
@@ -153,18 +156,24 @@ export default function WalletExperience(){
 		}else{
 			setProfile(null);setProfileLoadError('Account verification status is temporarily unavailable.');
 		}
-		if(currencyPreferenceRequest.status==='fulfilled'&&currencyPreferenceRequest.value.response.ok&&typeof currencyPreferenceRequest.value.result.currency==='string')setDisplayCurrency(currencyPreferenceRequest.value.result.currency);
+		if(!currencyPreferenceInitialized.current&&currencyPreferenceRequest.status==='fulfilled'&&currencyPreferenceRequest.value.response.ok&&typeof currencyPreferenceRequest.value.result.currency==='string'){
+			const preferred=currencyPreferenceRequest.value.result.currency;
+			setDisplayCurrency(preferred);
+			if(SUPPORTED_CURRENCIES.some(item=>item===preferred))setCurrency(preferred);
+			currencyPreferenceInitialized.current=true;
+		}
 		if(showLoading)setLoading(false);
 	},[]);
 
 	useEffect(()=>{
 		if(displayCurrency==='USD'){setCurrencyRate(null);setCurrencyError('');return}
 		let current=true;
+		setCurrencyRate(null);setCurrencyError('');
 		void fetch(`/api/currency-rates?to=${encodeURIComponent(displayCurrency)}`,{cache:'no-store'}).then(async response=>{
 			const result=await response.json();
 			if(!response.ok)throw new Error(result.error||'Exchange rate unavailable.');
 			if(current){setCurrencyRate(result);setCurrencyError('')}
-		}).catch(exception=>{if(current){setCurrencyRate(null);setCurrencyError(exception instanceof Error?exception.message:'Exchange rate unavailable.')}})
+		}).catch(()=>{if(current){setCurrencyRate({rate:null,source:null,observedAt:null,status:'UNAVAILABLE'});setCurrencyError('')}})
 		return()=>{current=false};
 	},[displayCurrency]);
 	async function updateDisplayCurrency(value:string){
@@ -180,7 +189,7 @@ export default function WalletExperience(){
 	useEffect(()=>{
 		if(sessionStatus!=='authenticated')return;
 		setData({accountMode:activeMode||'DEMO',balance:0,balances:[],transactions:[],adminLedgerReceipts:[]});
-		setMethods([]);setMethodId('');setFundingStatus('NOT_CONFIGURED');setRealFundingAvailable(false);setRealWithdrawalAvailable(false);setManualDepositReviewAvailable(false);setProfile(null);setMethodLoadError('');setProfileLoadError('');setHasWalletData(false);
+		setMethods([]);setMethodId('');setSimulatedBitcoinAddress('');setBitcoinAddressAcknowledged(false);setFundingStatus('NOT_CONFIGURED');setRealFundingAvailable(false);setRealWithdrawalAvailable(false);setManualDepositReviewAvailable(false);setProfile(null);setMethodLoadError('');setProfileLoadError('');setHasWalletData(false);
 		void load(true);
 	},[sessionStatus,activeMode,load]);
 	useEffect(()=>{
@@ -197,25 +206,27 @@ export default function WalletExperience(){
 	useEffect(()=>{if(supportedCurrencies.length&&!supportedCurrencies.includes(currency))setCurrency(supportedCurrencies[0])},[supportedCurrencies,currency]);
 	useEffect(()=>{if(manualRealFunding&&currency!=='USD')setCurrency('USD')},[manualRealFunding,currency]);
 	useEffect(()=>{
-		if(!selectedMethod?.destination||!bitcoinMethod||type!=='DEPOSIT'){
+		if(!simulatedBitcoinAddress||type!=='DEPOSIT'){
 			setBitcoinQr('');setBitcoinQrError('');
 			return;
 		}
 		let current=true;
 		setBitcoinQr('');setBitcoinQrError('');
-		const destination=/^bitcoin:/i.test(selectedMethod.destination)?selectedMethod.destination:`bitcoin:${selectedMethod.destination}`;
+		const destination=`bitcoin:${simulatedBitcoinAddress}`;
 		void QRCode.toDataURL(destination,{width:192,margin:1,color:{dark:'#102017',light:'#ffffff'}}).then(value=>{
 			if(current)setBitcoinQr(value);
 		}).catch(()=>{
 			if(current)setBitcoinQrError('Unable to generate the Bitcoin payment QR code.');
 		});
 		return ()=>{current=false};
-	},[selectedMethod?.destination,bitcoinMethod,type]);
+	},[simulatedBitcoinAddress,type]);
+	useEffect(()=>{setBitcoinAddressAcknowledged(false)},[simulatedBitcoinAddress]);
 	useEffect(()=>()=>{if(copiedTimer.current!==null)window.clearTimeout(copiedTimer.current)},[]);
 
 	async function submit(event:FormEvent<HTMLFormElement>){
 		event.preventDefault();
 		if(!selectedMethod&&!manualRealFunding)return;
+		if(type==='DEPOSIT'&&simulatedBitcoinAddress&&!bitcoinAddressAcknowledged){setError('Copy or scan the simulated Bitcoin address and confirm before submitting this deposit.');return;}
 		if(type==='DEPOSIT'&&selectedMethod&&!proofFile){setError(translate('paymentScreenshotRequired'));return;}
 		const minimumAmount=selectedMethod&&selectedMethod.minimumAmount!==null&&selectedMethod.minimumAmount!==undefined?Number(selectedMethod.minimumAmount):0.01;
 		const minAmount=type==='DEPOSIT'?minimumAmount:undefined;
@@ -227,9 +238,10 @@ export default function WalletExperience(){
 
 	async function confirmSubmit(){
 		if((!selectedMethod&&!manualRealFunding)||submitting)return;
+		if(type==='DEPOSIT'&&simulatedBitcoinAddress&&!bitcoinAddressAcknowledged){setError('Copy or scan the simulated Bitcoin address and confirm before submitting this deposit.');return;}
 		if(type==='DEPOSIT'&&selectedMethod&&!proofFile){setError(translate('paymentScreenshotRequired'));return;}
 		setSubmitting(true);setError('');
-		const payload={type,...(selectedMethod?{paymentMethodId:selectedMethod.id}:{}),amount:Number(amount),currency,transactionReference:transactionReference||undefined,referenceInfo:referenceInfo||undefined,senderInfo:senderInfo||undefined,destinationInfo:destinationInfo||undefined,beneficiaryInfo:beneficiaryInfo||undefined,network:network||undefined,note:note||undefined};
+		const payload={type,...(selectedMethod?{paymentMethodId:selectedMethod.id}:{}),amount:Number(amount),currency,transactionReference:transactionReference||undefined,referenceInfo:referenceInfo||undefined,senderInfo:senderInfo||undefined,destinationInfo:destinationInfo||undefined,beneficiaryInfo:beneficiaryInfo||undefined,network:network||undefined,note:note||undefined,...(type==='DEPOSIT'&&simulatedBitcoinAddress?{simulatedBitcoinAddress,simulatedBitcoinAddressAcknowledged:bitcoinAddressAcknowledged}:{})};
 		const fingerprint=JSON.stringify(payload);
 		const key=idempotencyKey&&keyFingerprint===fingerprint?idempotencyKey:window.crypto.randomUUID();setIdempotencyKey(key);setKeyFingerprint(fingerprint);
 		try{
@@ -249,15 +261,20 @@ export default function WalletExperience(){
 			if(!response.ok)throw new Error(result.error||'Unable to submit this request.');
 			setSubmittedReceipt(result as FundingRecord);
 			setMessage(response.status===200?`Request ${result.id} already exists with status ${String(result.status).replaceAll('_',' ')}. No new request was created.`:`Request ${result.id} submitted for administrator review. The ledger has not been posted.`);
-			setAmount('');setTransactionReference('');setReferenceInfo('');setSenderInfo('');setDestinationInfo('');setBeneficiaryInfo('');setNetwork('');setNote('');setProofFile(null);setIdempotencyKey('');setKeyFingerprint('');setConfirming(false);
+			setAmount('');setTransactionReference('');setReferenceInfo('');setSenderInfo('');setDestinationInfo('');setBeneficiaryInfo('');setNetwork('');setNote('');setProofFile(null);setIdempotencyKey('');setKeyFingerprint('');setBitcoinAddressAcknowledged(false);setConfirming(false);
 			await load();
 		}catch(exception){setError(exception instanceof Error?exception.message:'Unable to submit this request.');}
 		finally{setSubmitting(false);}
 	}
 
 	async function copyDestination(){
-		if(!selectedMethod?.destination||selectedMethod.demoOnly)return;
-		try{await navigator.clipboard.writeText(selectedMethod.destination);setCopied(true);if(copiedTimer.current!==null)window.clearTimeout(copiedTimer.current);copiedTimer.current=window.setTimeout(()=>{setCopied(false);copiedTimer.current=null},1500)}catch{setError('Clipboard access is unavailable in this browser.')}
+		if(!simulatedBitcoinAddress)return;
+		try{
+			await navigator.clipboard.writeText(simulatedBitcoinAddress);
+			setCopied(true);setBitcoinAddressAcknowledged(true);
+			if(copiedTimer.current!==null)window.clearTimeout(copiedTimer.current);
+			copiedTimer.current=window.setTimeout(()=>{setCopied(false);copiedTimer.current=null},1500);
+		}catch{setError('Clipboard access is unavailable in this browser.')}
 	}
 
 	async function uploadReceipt(request:FundingRecord){
@@ -324,9 +341,21 @@ export default function WalletExperience(){
 			<section className="account-panel card p-5"><div className="account-panel-title"><div><h2>{translate('fundingRequest')}</h2><p className="account-panel-subtitle">{translate('fundingRequestSubtitle')}</p></div><WalletCards size={18} className="gold" aria-hidden="true"/></div>
 				<>
 				<div className="account-callout account-mode-notice mt-4" role="status"><span><strong>Internal simulated funding</strong><br/>Deposits and withdrawals remain pending until an authorized administrator reviews them. No payment processor, bank, or crypto network is contacted.</span></div>
-				<div className="wallet-type-switch" role="group" aria-label={translate('fundingRequestType')}><button type="button" aria-pressed={type==='DEPOSIT'} onClick={()=>{setType('DEPOSIT');setConfirming(false)}}><ArrowDownLeft size={15}/> {translate('deposit')}</button><button type="button" aria-pressed={type==='WITHDRAWAL'} onClick={()=>{setType('WITHDRAWAL');setConfirming(false)}}><ArrowUpRight size={15}/> {translate('withdrawal')}</button></div>
+				<div className="wallet-type-switch" role="group" aria-label={translate('fundingRequestType')}><button type="button" aria-pressed={type==='DEPOSIT'} onClick={()=>{setType('DEPOSIT');setBitcoinAddressAcknowledged(false);setConfirming(false)}}><ArrowDownLeft size={15}/> {translate('deposit')}</button><button type="button" aria-pressed={type==='WITHDRAWAL'} onClick={()=>{setType('WITHDRAWAL');setBitcoinAddressAcknowledged(false);setConfirming(false)}}><ArrowUpRight size={15}/> {translate('withdrawal')}</button></div>
 				<form onSubmit={submit} className="mt-4 space-y-4">
 					{manualRealFunding&&<div className="account-callout" role="status"><span>Requests are recorded in the {data.accountMode} ledger. No payment evidence or external destination is required.</span></div>}
+					{type==='DEPOSIT'&&simulatedBitcoinAddress&&<div className="account-panel grid gap-3 border border-gold/30 p-4" aria-label="Simulated Bitcoin address">
+						<div><h3 className="font-semibold">Simulated Bitcoin address display</h3><p className="mt-1 text-sm text-amber-100">Display and QR practice only. Do not send Bitcoin to this address. This platform does not monitor the Bitcoin network or credit real transfers.</p></div>
+						<code className="block break-all rounded-lg bg-black/20 p-3 text-sm">{simulatedBitcoinAddress}</code>
+						<div className="flex flex-wrap items-center gap-3">
+							{bitcoinQr?<Image src={bitcoinQr} alt="QR code for the simulated Bitcoin address" width={160} height={160} unoptimized className="rounded bg-white p-2"/>:<p className="text-xs muted" role={bitcoinQrError?'alert':'status'}>{bitcoinQrError||'Preparing address QR code…'}</p>}
+							<div className="grid gap-2">
+								<button type="button" className="btn min-h-11 bg-white/5" onClick={()=>void copyDestination()}><Copy size={15}/>{copied?'Address copied':'Copy simulated Bitcoin address'}</button>
+								<button type="button" className="btn min-h-11 bg-white/5" aria-pressed={bitcoinAddressAcknowledged} onClick={()=>setBitcoinAddressAcknowledged(true)}>I scanned or copied this address</button>
+								{bitcoinAddressAcknowledged&&<span className="text-xs text-profit" role="status">Address acknowledged for this simulated request.</span>}
+							</div>
+						</div>
+					</div>}
 					{(selectedMethod||manualRealFunding)&&<>
 						<label className="account-label">{translate('currency')}<select className="input" required value={currency} onChange={event=>setCurrency(event.target.value)}>{supportedCurrencies.map(item=><option key={item} value={item}>{item}</option>)}</select></label>
 						<label className="account-label">{translate('amount',{currency})}<input className="input" type="number" min={type==='DEPOSIT'?'0.00000001':selectedMethod?.minimumAmount||'0.00000001'} max={type==='DEPOSIT'?undefined:selectedMethod?.maximumAmount||undefined} step="any" inputMode="decimal" required value={amount} onChange={event=>setAmount(event.target.value)} placeholder="0.00"/></label>
@@ -339,8 +368,8 @@ export default function WalletExperience(){
 						<label className="account-label">{translate('note')}<textarea className="input min-h-20" maxLength={500} value={note} onChange={event=>setNote(event.target.value)}/></label>
 					</>}
 					{!availableMethods.length&&!manualRealFunding&&<div className="account-empty" role="status">{methodLoadError||translate('noDepositMethods',{type:type.toLowerCase()})}</div>}
-					{confirming&&(selectedMethod||manualRealFunding)&&<div className="account-confirm-panel" role="alert"><h3>{translate('confirmRequest',{type:type.toLowerCase()})}</h3><p>{money(Number(amount||0),currency)} via {selectedMethod?.name||(manualRealFunding?'Simulated internal administrator review':'Manual administrator review')} in the {data.accountMode} account. This records a request for review and the ledger is posted only after approval.</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" className="btn bg-gold text-black" disabled={submitting} onClick={()=>void confirmSubmit()}>{submitting?translate('submitRequestStatus'):translate('confirmRequestButton')}</button><button type="button" className="btn bg-white/5" onClick={()=>setConfirming(false)}>{translate('cancelRequestButton')}</button></div></div>}
-					{!confirming&&<button className="btn w-full bg-gold text-black" type="submit" disabled={loading||!hasWalletData||(type==='DEPOSIT'&&(!profile?.depositEnabled||!!profileLoadError))||(type==='WITHDRAWAL'&&(realWithdrawalBlocked||!profile?.withdrawalEnabled||profile.accountRestricted||availableBalance===null))}>{type==='DEPOSIT'?'Submit simulated deposit request':'Submit simulated withdrawal request'}</button>}
+					{confirming&&(selectedMethod||manualRealFunding)&&<div className="account-confirm-panel" role="alert"><h3>{translate('confirmRequest',{type:type.toLowerCase()})}</h3><p>{money(Number(amount||0),currency)} via {selectedMethod?.name||(manualRealFunding?'Simulated internal administrator review':'Manual administrator review')} in the {data.accountMode} account. This records a request for review and the ledger is posted only after approval.</p><div className="mt-3 flex flex-wrap gap-2"><button type="button" className="btn bg-gold text-black" disabled={submitting||type==='DEPOSIT'&&!!simulatedBitcoinAddress&&!bitcoinAddressAcknowledged} onClick={()=>void confirmSubmit()}>{submitting?translate('submitRequestStatus'):translate('confirmRequestButton')}</button><button type="button" className="btn bg-white/5" onClick={()=>setConfirming(false)}>{translate('cancelRequestButton')}</button></div></div>}
+					{!confirming&&<button className="btn w-full bg-gold text-black" type="submit" disabled={loading||!hasWalletData||(type==='DEPOSIT'&&(!profile?.depositEnabled||!!profileLoadError||!!simulatedBitcoinAddress&&!bitcoinAddressAcknowledged))||(type==='WITHDRAWAL'&&(realWithdrawalBlocked||!profile?.withdrawalEnabled||profile.accountRestricted||availableBalance===null))}>{type==='DEPOSIT'?'Submit simulated deposit request':'Submit simulated withdrawal request'}</button>}
 				</form>
 				</>
 			</section>

@@ -1,10 +1,10 @@
 import {NextResponse} from 'next/server';
-import {AccountMode,FundingType} from '@prisma/client';
+import {AccountMode,FundingType,Prisma} from '@prisma/client';
 import {z,ZodError} from 'zod';
 import {getServerSession} from 'next-auth';
 import {authOptions} from '@/lib/auth-options';
 import {db} from '@/lib/db';
-import {balance} from '@/lib/ledger';
+import {balance,reservedWithdrawalAmount} from '@/lib/ledger';
 import {getAccountTier} from '@/lib/production-policy';
 import {getMarketQuote,MARKET_ASSETS} from '@/lib/live-market';
 import {getServerConfiguration} from '@/lib/config/env';
@@ -130,17 +130,26 @@ export async function POST(request:Request){
 				const eventTypes:string[]=[];
 				if(/\b(balance|wallet)\b/.test(requested)){
 					const ledger=await db.ledgerAccount.findUnique({where:{code:`USER:${user.id}:${user.accountMode}:USD`},select:{id:true}});
-					if(ledger){const current=await balance(db,ledger.id);answers.push(`${user.accountMode} USD ledger balance: ${current.toString()} USD (retrieved from the account ledger).`)}
+					if(ledger){
+						const [current,reserved]=await Promise.all([balance(db,ledger.id),reservedWithdrawalAmount(db,user.id,user.accountMode,'USD')]);
+						const available=Prisma.Decimal.max(new Prisma.Decimal(0),current.minus(reserved));
+						answers.push(`${user.accountMode} USD ledger balance: ${current.toString()} USD. Pending withdrawals reserve ${reserved.toString()} USD, leaving ${available.toString()} USD available before other account restrictions. Pending deposits are not included until approved. This is simulated ledger data.`);
+					}
 					else answers.push(`No ${user.accountMode} USD ledger account is available to report.`);
 					eventTypes.push('WALLET_BALANCE_LOOKUP');
 				}
 				if(/\bportfolio|positions?|holdings?\b/.test(requested)){
 					const [openPositionCount,positions]=await Promise.all([
 						db.position.count({where:{userId:user.id,accountMode:user.accountMode,status:'OPEN'}}),
-						db.position.findMany({where:{userId:user.id,accountMode:user.accountMode,status:'OPEN'},include:{instrument:{select:{symbol:true}}},orderBy:{openedAt:'desc'},take:5}),
+						db.position.findMany({where:{userId:user.id,accountMode:user.accountMode,status:'OPEN'},include:{instrument:{select:{symbol:true,price:true,updatedAt:true}}},orderBy:{openedAt:'desc'},take:5}),
 					]);
-					const holdings=positions.map(position=>`${position.side} ${position.quantity.toString()} ${position.instrument.symbol} at recorded entry ${position.entryPrice.toString()}`).join('; ');
-					answers.push(`${user.accountMode} account has ${openPositionCount} open position${openPositionCount===1?'':'s'}${holdings?`. Latest records: ${holdings}`:''}. Entry prices are not current valuations${user.accountMode==='DEMO'?'; DEMO activity is simulated':''}.`);
+					const holdings=positions.map(position=>{
+						const mark=new Prisma.Decimal(position.instrument.price);
+						const difference=position.side==='BUY'?mark.minus(position.entryPrice):position.entryPrice.minus(mark);
+						const unrealized=difference.mul(position.quantity);
+						return `${position.side} ${position.quantity.toString()} ${position.instrument.symbol} at entry ${position.entryPrice.toString()}, latest stored simulated mark ${mark.toString()}, unrealized mark-to-market ${unrealized.toString()} USD (price updated ${position.instrument.updatedAt.toISOString()})`;
+					}).join('; ');
+					answers.push(`${user.accountMode} account has ${openPositionCount} open position${openPositionCount===1?'':'s'}${holdings?`. Latest records: ${holdings}`:'. No open positions are recorded.'} Mark-to-market figures are estimates from stored simulated prices, not realized profit or external valuations.`);
 					eventTypes.push('PORTFOLIO_SUMMARY_LOOKUP');
 				}
 				if(/\b(orders?|trades?|execution|fill)\b/.test(requested)){

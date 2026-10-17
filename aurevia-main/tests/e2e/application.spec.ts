@@ -4,6 +4,7 @@ import {PNG} from 'pngjs';
 import {test,expect,loginAs,logout,waitForStartup,expectNoHorizontalOverflow} from './fixtures';
 import {db} from '../../lib/db';
 import {settleMaturedSimulatedInvestments} from '../../lib/demo-investment-settlement';
+import {SIMULATED_BTC_ADDRESS_SETTING} from '../../lib/config/simulated-bitcoin-address';
 
 const viewports=[
 	{width:320,height:800},
@@ -1635,6 +1636,45 @@ test('DEMO funding requests are admin-reviewed, idempotent, and ledger-backed',a
 	await selectAccountMode(page,'DEMO');
 });
 
+test('simulated BTC address is display-only and acknowledged before a deposit enters review',async({browser,page})=>{
+	const address='bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh';
+	const adminContext=await browser.newContext();
+	try{
+		const adminPage=await adminContext.newPage();
+		await loginAs(adminPage,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
+		const configured=await adminPage.request.put('/api/admin/settings',{data:{key:SIMULATED_BTC_ADDRESS_SETTING,value:address}});
+		expect(configured.status()).toBe(200);
+
+		await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
+		await selectAccountMode(page,'DEMO');
+		const before=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
+		const methods=await page.request.get('/api/payment-methods').then(response=>response.json());
+		expect(methods).toMatchObject({simulatedBitcoinAddress:address,externalPaymentProcessing:'DISABLED'});
+		await page.goto('/wallet');
+		await expect(page.getByText(address,{exact:true})).toBeVisible();
+		await expect(page.getByRole('img',{name:'QR code for the simulated Bitcoin address'})).toBeVisible();
+		const acknowledgement=page.getByRole('button',{name:'I scanned or copied this address'});
+		const submit=page.getByRole('button',{name:'Submit simulated deposit request'});
+		await expect(submit).toBeDisabled();
+		await acknowledgement.click();
+		await expect(acknowledgement).toHaveAttribute('aria-pressed','true');
+		await expect(submit).toBeEnabled();
+
+		const payload={type:'DEPOSIT',amount:20,currency:'USD',simulatedBitcoinAddress:address};
+		const missingAcknowledgement=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:payload});
+		expect(missingAcknowledgement.status()).toBe(400);
+		expect((await missingAcknowledgement.json()).error).toContain('confirm');
+		const submitted=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{...payload,simulatedBitcoinAddressAcknowledged:true}});
+		expect(submitted.status()).toBe(201);
+		expect(await submitted.json()).toMatchObject({type:'DEPOSIT',status:'PENDING_REVIEW',accountMode:'DEMO'});
+		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(before);
+	}finally{
+		const adminPage=adminContext.pages()[0];
+		if(adminPage)await adminPage.request.put('/api/admin/settings',{data:{key:SIMULATED_BTC_ADDRESS_SETTING,value:''}}).catch(()=>undefined);
+		await adminContext.close();
+	}
+});
+
 test('display currency preference persists across account and activity surfaces without changing ledger cash',async({page})=>{
 	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
 	await selectAccountMode(page,'DEMO');
@@ -1789,6 +1829,7 @@ test('approved deposit receipts use the credited amount and reviewer audit',asyn
 	await receiptDetails.locator('summary').click();
 	await expect(receiptDetails.getByText('100.00 USD',{exact:true}).last()).toBeVisible();
 	await expect(receiptDetails.getByText('Reviewed by',{exact:true})).toBeVisible();
+	await expect(receiptDetails.getByText(fixture('ADMIN_EMAIL'),{exact:true})).toHaveCount(0);
 	const downloadPromise=page.waitForEvent('download');
 	await receiptDetails.getByRole('button',{name:'Download PDF'}).click();
 	expect((await downloadPromise).suggestedFilename()).toContain('approved');

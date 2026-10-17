@@ -86,7 +86,7 @@ async function verifyPrivateBucket(config:StorageConfiguration,area:PrivateStora
 	if(cached&&cached.expiresAt>Date.now())return cached.promise;
 	const promise=(async()=>{
 		let response:Response;
-		try{response=await fetch(`${config.baseUrl}/storage/v1/bucket/${encodeURIComponent(bucket)}`,{headers:storageHeaders(config),cache:'no-store'})}
+		try{response=await fetch(`${config.baseUrl}/storage/v1/bucket/${encodeURIComponent(bucket)}`,{headers:storageHeaders(config),cache:'no-store',signal:AbortSignal.timeout(5_000)})}
 		catch{throw new PrivateStorageError('Private file storage is unavailable.',503)}
 		if(!response.ok)throw new PrivateStorageError('Private storage bucket is unavailable.',503);
 		const result=await response.json() as {id?:string;public?:boolean};
@@ -119,7 +119,7 @@ export async function deletePrivateObject(area:PrivateStorageArea,ownerId:string
 	try{
 		const config=configuration();
 		await verifyPrivateBucket(config,area);
-		const response=await fetch(objectUrl(config,area,key),{method:'DELETE',headers:storageHeaders(config)});
+		const response=await fetch(objectUrl(config,area,key),{method:'DELETE',headers:storageHeaders(config),signal:AbortSignal.timeout(5_000)});
 		if(!response.ok&&response.status!==404)throw new PrivateStorageError('Private file cleanup failed.',502);
 	}catch(error){
 		const reason=error instanceof PrivateStorageError?String(error.status):error instanceof Error?error.name:'UnknownError';

@@ -39,7 +39,7 @@ export async function POST(request:Request){
   const input=requestSchema.parse(await request.json());
   const idempotencyKey=request.headers.get('Idempotency-Key')||'';
   if(!requestKeyPattern.test(idempotencyKey))return NextResponse.json({error:'A valid idempotency key is required.'},{status:400});
-  const result=await db.$transaction(async tx=>{
+  const submit=()=>db.$transaction(async tx=>{
    const prior=await tx.investmentRequest.findUnique({where:{idempotencyKey}});
    if(prior){
     if(!sameRequest(prior,user.id,input.opportunityId,user.accountMode,input.amount))throw new Error('IDEMPOTENCY_KEY_REUSED');
@@ -68,6 +68,18 @@ export async function POST(request:Request){
   if(opportunity.requiresApproval)await notifyActiveAdmins(tx,{type:NotificationType.SYSTEM,title:'Simulated investment request awaiting review',message:`A ${user.accountMode} simulated investment request is awaiting administrator review.`,dedupeKey:`investment:${investment.id}:admin`,relatedEntity:'INVESTMENT',relatedId:investment.id,actionUrl:'/admin/investments'});
    return {investment,replay:false};
   },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable,maxWait:5_000,timeout:15_000});
+  let result:Awaited<ReturnType<typeof submit>>|undefined;
+  for(let attempt=0;attempt<3;attempt++){
+   try{
+    result=await submit();
+    break;
+   }catch(error){
+    const retryable=error instanceof Prisma.PrismaClientKnownRequestError&&error.code==='P2034';
+    if(!retryable||attempt===2)throw error;
+    await new Promise(resolve=>setTimeout(resolve,25*(attempt+1)));
+   }
+  }
+  if(!result)throw new Error('INVESTMENT_SUBMISSION_INCOMPLETE');
   return NextResponse.json(jsonSafe(result.investment),{status:result.replay?200:201,headers:{'Cache-Control':'private, no-store'}});
  }catch(error){
   if(error instanceof ZodError)return NextResponse.json({error:'Enter an amount within the opportunity limits.'},{status:400});
@@ -75,6 +87,8 @@ export async function POST(request:Request){
   if(error instanceof Error&&['IDEMPOTENCY_KEY_REUSED','INVESTMENT_UNAVAILABLE','INVESTMENT_MODE_UNAVAILABLE','INVESTMENT_MATURED'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:409});
   if(error instanceof Error&&['INVESTMENT_AMOUNT_OUT_OF_RANGE','INSUFFICIENT_SIMULATED_BALANCE'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:400});
   if(error&&typeof error==='object'&&'code'in error&&String(error.code)==='P2002')return NextResponse.json({error:'This investment request was already received.'},{status:409});
+  const code=error&&typeof error==='object'&&'code'in error?String(error.code):'';
+  console.error(`Investment submission failed (${/^[A-Z0-9_]{2,32}$/.test(code)?code:error instanceof Error?error.name:'UnknownError'}).`);
   return NextResponse.json({error:'Unable to submit this investment request.'},{status:503});
  }
 }
