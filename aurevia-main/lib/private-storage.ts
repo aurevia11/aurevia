@@ -121,9 +121,11 @@ export async function deletePrivateObject(area:PrivateStorageArea,ownerId:string
 		await verifyPrivateBucket(config,area);
 		const response=await fetch(objectUrl(config,area,key),{method:'DELETE',headers:storageHeaders(config),signal:AbortSignal.timeout(5_000)});
 		if(!response.ok&&response.status!==404)throw new PrivateStorageError('Private file cleanup failed.',502);
+		return true;
 	}catch(error){
 		const reason=error instanceof PrivateStorageError?String(error.status):error instanceof Error?error.name:'UnknownError';
 		console.error(`Private file cleanup failed (${reason}).`);
+		return false;
 	}
 }
 

@@ -23,7 +23,7 @@ export async function POST(request:Request){
 		if(!candidate||candidate.consumedAt||candidate.expiresAt<=new Date())return NextResponse.json({error:'This recovery link is invalid or expired. Request a new link.'},{status:400});
 		const passwordHash=await bcrypt.hash(input.password,12);
 		const now=new Date();
-		const updated=await db.$transaction(async tx=>{
+		await db.$transaction(async tx=>{
 			const claim=await tx.passwordResetToken.updateMany({where:{id:candidate.id,tokenHash,consumedAt:null,expiresAt:{gt:now}},data:{consumedAt:now}});
 			if(claim.count!==1)throw new Error('RESET_TOKEN_USED');
 			const user=await tx.user.update({where:{id:candidate.userId},data:{passwordHash,activeSessionId:null,activeSessionUpdatedAt:null},select:{id:true}});

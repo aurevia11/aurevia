@@ -3,11 +3,12 @@ import {beforeEach,describe,expect,it,vi} from 'vitest';
 const mocks=vi.hoisted(()=>({
 	requireUser:vi.fn(),
 	findUnique:vi.fn(),
+	investmentFindFirst:vi.fn(),
 	transaction:vi.fn(),
 }));
 
 vi.mock('@/lib/auth',()=>({requireUser:mocks.requireUser}));
-vi.mock('@/lib/db',()=>({db:{user:{findUnique:mocks.findUnique},$transaction:mocks.transaction}}));
+vi.mock('@/lib/db',()=>({db:{user:{findUnique:mocks.findUnique},investmentRequest:{findFirst:mocks.investmentFindFirst},$transaction:mocks.transaction}}));
 vi.mock('@/lib/notifications',()=>({createNotification:vi.fn()}));
 
 import {GET,PATCH} from '../app/api/profile/route';
@@ -16,6 +17,7 @@ describe('profile two-factor status',()=>{
 	beforeEach(()=>{
 		vi.clearAllMocks();
 		mocks.requireUser.mockResolvedValue({id:'user-1'});
+		mocks.investmentFindFirst.mockResolvedValue(null);
 	});
 
 	it('reports two-factor as unavailable even if the legacy database flag is set',async()=>{

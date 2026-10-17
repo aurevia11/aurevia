@@ -4,7 +4,7 @@ import {FormEvent,useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import {useSession} from 'next-auth/react';
-import {ArrowDownLeft,ArrowUpRight,Check,Copy,Eye,EyeOff,QrCode,RefreshCw,WalletCards} from 'lucide-react';
+import {ArrowDownLeft,ArrowUpRight,Copy,Eye,EyeOff,QrCode,RefreshCw,WalletCards} from 'lucide-react';
 import Nav from '@/components/Nav';
 import ReceiptGenerator from '@/components/ReceiptGenerator';
 import {useLocale} from '@/lib/i18n-context';

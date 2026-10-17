@@ -1,6 +1,6 @@
 import {NextResponse} from 'next/server';
 import {Prisma} from '@prisma/client';
-import {ZodError} from 'zod';
+import {z,ZodError} from 'zod';
 import {requireAdmin} from '@/lib/auth';
 import {db} from '@/lib/db';
 import {jsonSafe} from '@/lib/serializers';
@@ -12,7 +12,7 @@ export const dynamic='force-dynamic';
 export async function GET(){
   try{
     await requireAdmin();
-    const entries=await db.waitlistEntry.findMany({include:{user:{select:{id:true,email:true,name:true}}},orderBy:{createdAt:'desc'},take:1000});
+    const entries=await db.waitlistEntry.findMany({where:{deletedAt:null},include:{user:{select:{id:true,email:true,name:true}}},orderBy:{createdAt:'desc'},take:1000});
     return NextResponse.json(jsonSafe(entries),{headers:{'Cache-Control':'private, no-store'}});
   }catch{return NextResponse.json({error:'Forbidden'},{status:403})}
 }
@@ -21,7 +21,7 @@ export async function PATCH(request:Request){
   try{
     const admin=await requireAdmin();
     const input=waitlistStatusSchema.parse(await request.json());
-    const current=await db.waitlistEntry.findUnique({where:{id:input.id}});
+    const current=await db.waitlistEntry.findFirst({where:{id:input.id,deletedAt:null}});
     if(!current)return NextResponse.json({error:'Waitlist entry not found.'},{status:404});
     const updated=await db.$transaction(async tx=>{
       const entry=await tx.waitlistEntry.update({where:{id:input.id},data:{status:input.status,notes:input.notes??null,updatedAt:new Date()}});
@@ -44,17 +44,19 @@ export async function PATCH(request:Request){
 export async function DELETE(request:Request){
   try{
     const admin=await requireAdmin();
-    const id=(await request.json()).id;
-    if(!id)return NextResponse.json({error:'Waitlist entry ID is required.'},{status:400});
-    const entry=await db.waitlistEntry.findUnique({where:{id}});
+    const input=z.object({id:z.string().min(1)}).parse(await request.json());
+    const entry=await db.waitlistEntry.findFirst({where:{id:input.id,deletedAt:null}});
     if(!entry)return NextResponse.json({error:'Waitlist entry not found.'},{status:404});
     await db.$transaction(async tx=>{
-      await tx.auditLog.create({data:{actorId:admin.id,action:'WAITLIST_ENTRY_REMOVED',entity:'WAITLIST_ENTRY',entityId:id,metadata:{email:entry.email}}});
-      await tx.waitlistEntry.delete({where:{id}});
+      const removed=await tx.waitlistEntry.updateMany({where:{id:input.id,deletedAt:null},data:{deletedAt:new Date(),deletedById:admin.id}});
+      if(removed.count!==1)throw new Error('WAITLIST_ENTRY_CHANGED');
+      await tx.auditLog.create({data:{actorId:admin.id,action:'WAITLIST_ENTRY_SOFT_DELETED',entity:'WAITLIST_ENTRY',entityId:input.id,metadata:{email:entry.email,originalLocation:'/admin/waitlist'}}});
     });
-    return NextResponse.json({removed:true});
+    return NextResponse.json({removed:true,restorable:true});
   }catch(error){
+    if(error instanceof ZodError)return NextResponse.json({error:'Waitlist entry ID is required.'},{status:400});
     if(error instanceof Error&&error.message==='FORBIDDEN')return NextResponse.json({error:'Forbidden'},{status:403});
+    if(error instanceof Error&&error.message==='WAITLIST_ENTRY_CHANGED')return NextResponse.json({error:'Waitlist entry was changed by another administrator.'},{status:409});
     return NextResponse.json({error:'Unable to remove the waitlist entry.'},{status:400});
   }
 }

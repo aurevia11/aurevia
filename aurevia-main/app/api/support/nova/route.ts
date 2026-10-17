@@ -1,5 +1,5 @@
 import {NextResponse} from 'next/server';
-import {AccountMode,FundingType,Prisma} from '@prisma/client';
+import {FundingType,Prisma} from '@prisma/client';
 import {z,ZodError} from 'zod';
 import {getServerSession} from 'next-auth';
 import {authOptions} from '@/lib/auth-options';

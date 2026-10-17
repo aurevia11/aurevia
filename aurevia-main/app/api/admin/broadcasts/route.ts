@@ -31,7 +31,7 @@ function errorResponse(error:unknown){
 export async function GET(){
 	try{
 		await requireAdmin();
-		const broadcasts=await db.broadcast.findMany({include:{createdBy:{select:{id:true,name:true,email:true}}},orderBy:[{startsAt:'desc'},{createdAt:'desc'}],take:250});
+		const broadcasts=await db.broadcast.findMany({where:{deletedAt:null},include:{createdBy:{select:{id:true,name:true,email:true}}},orderBy:[{startsAt:'desc'},{createdAt:'desc'}],take:250});
 		return NextResponse.json(jsonSafe(broadcasts),{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){return errorResponse(error)}
 }
@@ -58,14 +58,14 @@ export async function PATCH(request:Request){
 		const result=await db.$transaction(async tx=>{
 			if(body.action==='update'){
 				const input=updateSchema.parse(body);
-				const current=await tx.broadcast.findUnique({where:{id:input.id}});
+				const current=await tx.broadcast.findFirst({where:{id:input.id,deletedAt:null}});
 				if(!current)throw new Error('BROADCAST_NOT_FOUND');
 				if(current.status!==BroadcastStatus.DRAFT&&current.status!==BroadcastStatus.SCHEDULED)throw new Error('BROADCAST_TRANSITION_NOT_ALLOWED');
 				const streamUrl=validateBroadcastUrl(input.streamUrl===undefined?current.streamUrl:input.streamUrl);
 				const startsAt=input.startsAt===undefined?current.startsAt:input.startsAt;
 				if(current.status===BroadcastStatus.SCHEDULED&&(!startsAt||startsAt<=new Date()))throw new Error('BROADCAST_SCHEDULE_REQUIRED');
 				const {action:_,id,...data}=input;
-				const changed=await tx.broadcast.updateMany({where:{id:current.id,status:current.status},data:{...data,streamUrl,startsAt}});
+				const changed=await tx.broadcast.updateMany({where:{id:current.id,status:current.status,deletedAt:null},data:{...data,streamUrl,startsAt}});
 				if(changed.count!==1)throw new Error('BROADCAST_STATE_CHANGED');
 				const updated=await tx.broadcast.findUniqueOrThrow({where:{id:current.id}});
 				await tx.auditLog.create({data:{actorId:admin.id,action:'BROADCAST_UPDATED',entity:'BROADCAST',entityId:current.id,metadata:{oldStatus:current.status,newStatus:updated.status,title:updated.title,startsAt:updated.startsAt?.toISOString()??null,hasStreamSource:Boolean(updated.streamUrl)}}});
@@ -73,7 +73,7 @@ export async function PATCH(request:Request){
 			}
 
 			const input=transitionSchema.parse(body);
-			const current=await tx.broadcast.findUnique({where:{id:input.id}});
+			const current=await tx.broadcast.findFirst({where:{id:input.id,deletedAt:null}});
 			if(!current)throw new Error('BROADCAST_NOT_FOUND');
 			const action=input.action as BroadcastAction;
 			const status=nextBroadcastStatus(current.status,action);
@@ -83,7 +83,7 @@ export async function PATCH(request:Request){
 			if(action==='publish')data.publishedAt=now;
 			if(action==='end')data.endedAt=now;
 			if(action==='archive')data.archivedAt=now;
-			const changed=await tx.broadcast.updateMany({where:{id:current.id,status:current.status},data});
+			const changed=await tx.broadcast.updateMany({where:{id:current.id,status:current.status,deletedAt:null},data});
 			if(changed.count!==1)throw new Error('BROADCAST_STATE_CHANGED');
 			const updated=await tx.broadcast.findUniqueOrThrow({where:{id:current.id}});
 			await tx.auditLog.create({data:{actorId:admin.id,action:`BROADCAST_${status}`,entity:'BROADCAST',entityId:current.id,metadata:{oldStatus:current.status,newStatus:status,title:current.title,hasStreamSource:Boolean(current.streamUrl)}}});
@@ -91,4 +91,22 @@ export async function PATCH(request:Request){
 		},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
 		return NextResponse.json(jsonSafe(result),{headers:{'Cache-Control':'private, no-store'}});
 	}catch(error){return errorResponse(error)}
+}
+
+export async function DELETE(request:Request){
+	try{
+		const admin=await requireAdmin();
+		const input=z.object({id:z.string().min(1)}).parse(await request.json());
+		await db.$transaction(async tx=>{
+			const broadcast=await tx.broadcast.findFirst({where:{id:input.id,deletedAt:null},select:{id:true,title:true,status:true,updatedAt:true}});
+			if(!broadcast)throw new Error('BROADCAST_NOT_FOUND');
+			const changed=await tx.broadcast.updateMany({where:{id:broadcast.id,deletedAt:null,updatedAt:broadcast.updatedAt},data:{deletedAt:new Date(),deletedById:admin.id}});
+			if(changed.count!==1)throw new Error('BROADCAST_STATE_CHANGED');
+			await tx.auditLog.create({data:{actorId:admin.id,action:'BROADCAST_SOFT_DELETED',entity:'BROADCAST',entityId:broadcast.id,metadata:{title:broadcast.title,status:broadcast.status,originalLocation:'/admin/broadcasts'}}});
+		},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+		return NextResponse.json({deleted:true,restorable:true});
+	}catch(error){
+		if(error instanceof ZodError)return NextResponse.json({error:'Broadcast ID is required.'},{status:400});
+		return errorResponse(error);
+	}
 }

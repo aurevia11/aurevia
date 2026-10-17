@@ -10,7 +10,7 @@ export async function GET(){
 	try{
 		await requireUser();
 		const broadcasts=await db.broadcast.findMany({
-			where:{OR:[{status:BroadcastStatus.PUBLISHED},{status:BroadcastStatus.ENDED},{status:BroadcastStatus.SCHEDULED,startsAt:{gte:new Date()}}]},
+			where:{deletedAt:null,OR:[{status:BroadcastStatus.PUBLISHED},{status:BroadcastStatus.ENDED},{status:BroadcastStatus.SCHEDULED,startsAt:{gte:new Date()}}]},
 			select:{id:true,title:true,description:true,streamUrl:true,startsAt:true,status:true,publishedAt:true,endedAt:true,createdAt:true,updatedAt:true},
 			orderBy:[{startsAt:'asc'},{publishedAt:'desc'}],
 			take:100,

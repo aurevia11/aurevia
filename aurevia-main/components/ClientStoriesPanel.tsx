@@ -2,7 +2,7 @@
 
 import {useEffect,useState} from 'react';
 import Image from 'next/image';
-import {Check,ImageOff,LoaderCircle,ShieldCheck} from 'lucide-react';
+import {Check,ImageOff,LoaderCircle,ShieldCheck,Trash2} from 'lucide-react';
 import {resolveClientStoryImage} from '@/lib/client-story-media';
 
 type StoryStatus='DRAFT'|'PENDING_VERIFICATION'|'VERIFIED'|'PUBLISHED'|'REJECTED'|'ARCHIVED';
@@ -41,6 +41,18 @@ export default function ClientStoriesPanel(){
 		}catch(exception){setError(exception instanceof Error?exception.message:'Unable to update this story.');}
 	}
 
+	async function remove(story:Story){
+		if(!window.confirm(`Move "${story.displayName}" to Deleted Items? Its publication will stop immediately and it can be restored later.`))return;
+		setError('');setMessage('');
+		try{
+			const response=await fetch('/api/admin/client-stories',{method:'DELETE',headers:{'content-type':'application/json'},body:JSON.stringify({storyId:story.id})});
+			const result=await response.json();
+			if(!response.ok)throw new Error(result.error||'Unable to move this story to Deleted Items.');
+			setMessage(`${story.displayName} moved to Deleted Items.`);
+			await load();
+		}catch(exception){setError(exception instanceof Error?exception.message:'Unable to move this story to Deleted Items.');}
+	}
+
 	async function uploadImage(story:Story,file:File){
 		const body=new FormData();body.append('storyId',story.id);body.append('file',file);
 		const response=await fetch('/api/admin/client-stories/image',{method:'POST',body});
@@ -53,11 +65,11 @@ export default function ClientStoriesPanel(){
 	return <section id="client-stories" className="card p-4 sm:p-5">
 		<header className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-bold">Client stories</h2><p className="muted mt-1 text-sm">Private drafts stay unpublished until identity, transaction, and consent checks pass.</p></div><button className="btn min-h-11 bg-white/5" type="button" onClick={()=>void load()} disabled={loading}>{loading?<LoaderCircle size={16} className="animate-spin"/>:'Refresh'}</button></header>
 		{error&&<p role="alert" className="mt-3 text-sm text-loss">{error}</p>}{message&&<p role="status" className="mt-3 text-sm text-profit">{message}</p>}
-		{loading&&!stories.length?<p className="mt-4 muted">Loading story drafts…</p>:stories.length?<div className="mt-4 space-y-4">{stories.map(story=><ClientStoryEditor key={story.id} story={story} users={users} onUpdate={update} onUpload={uploadImage}/>)}</div>:<p className="mt-4 muted">No client stories are available.</p>}
+		{loading&&!stories.length?<p className="mt-4 muted">Loading story drafts…</p>:stories.length?<div className="mt-4 space-y-4">{stories.map(story=><ClientStoryEditor key={story.id} story={story} users={users} onUpdate={update} onUpload={uploadImage} onDelete={remove}/>)}</div>:<p className="mt-4 muted">No client stories are available.</p>}
 	</section>;
 }
 
-function ClientStoryEditor({story,users,onUpdate,onUpload}:{story:Story;users:AdminUser[];onUpdate:(story:Story,payload:Record<string,unknown>)=>Promise<void>;onUpload:(story:Story,file:File)=>Promise<{imageReference:string;imageUrl:string}>}){
+function ClientStoryEditor({story,users,onUpdate,onUpload,onDelete}:{story:Story;users:AdminUser[];onUpdate:(story:Story,payload:Record<string,unknown>)=>Promise<void>;onUpload:(story:Story,file:File)=>Promise<{imageReference:string;imageUrl:string}>;onDelete:(story:Story)=>Promise<void>}){
 	const [displayName,setDisplayName]=useState(story.displayName);
 	const [country,setCountry]=useState(story.country);
 	const [cityOrRegion,setCityOrRegion]=useState(story.cityOrRegion||'');
@@ -113,6 +125,7 @@ function ClientStoryEditor({story,users,onUpdate,onUpload}:{story:Story;users:Ad
 			<button className="btn min-h-11 bg-profit px-4 text-black disabled:opacity-40" type="button" disabled={!canPublish} onClick={()=>void onUpdate(story,{...payload(),publicationStatus:'PUBLISHED'})}>Approve publication</button>
 			<button className="btn min-h-11 bg-loss px-4" type="button" onClick={()=>void onUpdate(story,{...payload(),publicationStatus:'REJECTED'})}>Reject</button>
 			<button className="btn min-h-11 bg-white/5" type="button" onClick={()=>void onUpdate(story,{...payload(),publicationStatus:'ARCHIVED'})}>Archive</button>
+			<button className="btn min-h-11 bg-white/5" type="button" onClick={()=>void onDelete(story)}><Trash2 size={14}/>Move to Deleted Items</button>
 		</div>
 	</article>;
 }

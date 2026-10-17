@@ -4,20 +4,24 @@ import Image from 'next/image';
 import Link from 'next/link';
 import {signOut,useSession} from 'next-auth/react';
 import {usePathname} from 'next/navigation';
-import {ArrowLeft,BriefcaseBusiness,ClipboardCheck,FileCheck2,LayoutDashboard,LogOut,Menu,MessageSquareText,Radio,ReceiptText,ScrollText,Settings2,ShieldCheck,UsersRound,X} from 'lucide-react';
+import {ArrowLeft,BriefcaseBusiness,ClipboardCheck,FileCheck2,LayoutDashboard,LogOut,Menu,MessageSquareText,Radio,ReceiptText,ScrollText,Settings2,ShieldCheck,SlidersHorizontal,Trash2,UsersRound,X} from 'lucide-react';
 import {useEffect,useState} from 'react';
 
 const groups=[
 	{title:'Workspace',links:[
 		{href:'/admin',label:'Control room',icon:LayoutDashboard},
 		{href:'/admin/users',label:'User accounts',icon:UsersRound},
+		{href:'/admin/content',label:'Client stories',icon:Radio},
 		{href:'/admin/broadcasts',label:'Broadcasts',icon:Radio},
 		{href:'/admin/investments',label:'Investment operations',icon:BriefcaseBusiness},
 		{href:'/admin/payments',label:'Payments',icon:ReceiptText},
 		{href:'/admin/approved-deposits',label:'Approved deposits',icon:ReceiptText},
 		{href:'/admin/approved-withdrawals',label:'Approved withdrawals',icon:ReceiptText},
 		{href:'/admin/settlements',label:'Settlements',icon:ReceiptText},
+		{href:'/admin/positions',label:'Open positions',icon:BriefcaseBusiness},
 		{href:'/admin/markets',label:'Market management',icon:Settings2},
+		{href:'/admin/settings',label:'System settings',icon:SlidersHorizontal},
+		{href:'/admin/deleted-items',label:'Deleted Items',icon:Trash2},
 	]},
 	{title:'Account review',links:[
 		{href:'/admin/kyc',label:'Pending verification',icon:ClipboardCheck},

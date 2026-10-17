@@ -1,7 +1,7 @@
 'use client';
 
 import {FormEvent,useCallback,useEffect,useState} from 'react';
-import {CalendarClock,Check,Edit3,Plus,Radio,RefreshCw} from 'lucide-react';
+import {CalendarClock,Check,Edit3,Plus,Radio,RefreshCw,Trash2} from 'lucide-react';
 
 type Broadcast={id:string;title:string;description:string;streamUrl:string|null;startsAt:string|null;status:string;publishedAt:string|null;endedAt:string|null;archivedAt:string|null;createdAt:string;createdBy:{id:string;name:string|null;email:string}};
 type Draft={title:string;description:string;streamUrl:string;startsAt:string;status:'DRAFT'|'SCHEDULED'};
@@ -62,6 +62,17 @@ export default function AdminBroadcastsPanel(){
 		finally{setBusy('')}
 	}
 
+	async function remove(item:Broadcast){
+		if(!window.confirm(`Move "${item.title}" to Deleted Items? Its public listing will be removed immediately and the record can be restored later.`))return;
+		if(busy)return;setBusy(`${item.id}:delete`);setError('');setNotice('');
+		try{
+			const response=await fetch('/api/admin/broadcasts',{method:'DELETE',headers:{'content-type':'application/json'},body:JSON.stringify({id:item.id})});
+			const result=await response.json();if(!response.ok)throw new Error(result.error||'Unable to move this broadcast to Deleted Items.');
+			setNotice('Broadcast moved to Deleted Items.');await load();
+		}catch(exception){setError(exception instanceof Error?exception.message:'Unable to move this broadcast to Deleted Items.');}
+		finally{setBusy('')}
+	}
+
 	function actions(status:string){
 		if(status==='DRAFT')return ['schedule','publish','archive'];
 		if(status==='SCHEDULED')return ['publish','archive'];
@@ -87,7 +98,7 @@ export default function AdminBroadcastsPanel(){
 			{loading&&!broadcasts.length?<p className="account-empty" role="status">Loading broadcasts…</p>:broadcasts.length?<div className="divide-y divide-white/10 rounded-md border border-white/10">{broadcasts.map(item=><article className="p-4" key={item.id}>
 				<header className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><span className="account-kicker">{item.status}</span><h3 className="mt-1 text-lg font-semibold">{item.title}</h3><p className="mt-1 break-words text-sm muted">{item.description}</p><small className="mt-2 block break-all muted">{item.startsAt?`Scheduled ${new Date(item.startsAt).toLocaleString()} · `:''}{item.streamUrl?'Source configured':'No stream source'} · Ref {item.id}</small></div>
 					{item.status==='DRAFT'||item.status==='SCHEDULED'?<button type="button" className="icon-action" aria-label={`Edit ${item.title}`} onClick={()=>edit(item)}><Edit3 size={15}/></button>:null}</header>
-				<div className="mt-3 flex flex-wrap gap-2">{actions(item.status).map(action=><button className={`btn min-h-10 ${action==='archive'||action==='end'?'bg-white/5':'bg-gold text-black'}`} type="button" key={action} disabled={Boolean(busy)} onClick={()=>void transition(item,action)}>{busy===`${item.id}:${action}`?'Saving…':action==='schedule'?<><CalendarClock size={14}/> Schedule</>:action==='publish'?<><Check size={14}/> Publish</>:action.replaceAll('_',' ')}</button>)}</div>
+				<div className="mt-3 flex flex-wrap gap-2">{actions(item.status).map(action=><button className={`btn min-h-10 ${action==='archive'||action==='end'?'bg-white/5':'bg-gold text-black'}`} type="button" key={action} disabled={Boolean(busy)} onClick={()=>void transition(item,action)}>{busy===`${item.id}:${action}`?'Saving…':action==='schedule'?<><CalendarClock size={14}/> Schedule</>:action==='publish'?<><Check size={14}/> Publish</>:action.replaceAll('_',' ')}</button>)}<button className="btn min-h-10 bg-white/5" type="button" disabled={Boolean(busy)} onClick={()=>void remove(item)}><Trash2 size={14}/>Move to Deleted Items</button></div>
 				</article>)}</div>:<p className="account-empty">No broadcasts have been created.</p>}
 		</section>
 	</div>;

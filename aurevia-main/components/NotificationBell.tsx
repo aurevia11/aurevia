@@ -3,7 +3,7 @@
 import {useCallback,useEffect,useRef,useState} from 'react';
 import {useSession} from 'next-auth/react';
 import {useRouter} from 'next/navigation';
-import {Activity,Bell,Check,CheckCheck,ChevronRight,CircleDollarSign,Info,LifeBuoy,RefreshCw,ShieldCheck,UserRound,WalletCards} from 'lucide-react';
+import {Activity,Bell,CheckCheck,ChevronRight,CircleDollarSign,Info,LifeBuoy,RefreshCw,ShieldCheck,UserRound,WalletCards} from 'lucide-react';
 import {useLocale} from '@/lib/i18n-context';
 
 type NotificationItem={id:string;type:string;title:string;message:string;isRead:boolean;createdAt:string;actionUrl:string|null};

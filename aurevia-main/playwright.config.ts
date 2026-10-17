@@ -1,4 +1,4 @@
-import {randomBytes,randomUUID} from 'node:crypto';
+import {randomBytes} from 'node:crypto';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {defineConfig,devices} from '@playwright/test';
@@ -59,7 +59,7 @@ export default defineConfig({
 	projects:[{name:'chromium',use:{...devices['Desktop Chrome']}}],
 	webServer:[
 		{
-			command:'node tests/e2e/mock-provider.cjs',
+			command:'node tests/e2e/mock-provider.mjs',
 			url:`${providerURL}/health`,
 			reuseExistingServer:false,
 			timeout:15000,

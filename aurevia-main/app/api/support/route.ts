@@ -1,5 +1,5 @@
 import {NextResponse} from 'next/server';
-import {AccountMode,NotificationType,SupportAuthor,SupportStatus} from '@prisma/client';
+import {NotificationType,SupportAuthor,SupportStatus} from '@prisma/client';
 import {z,ZodError} from 'zod';
 import {requireUser} from '@/lib/auth';
 import {db} from '@/lib/db';

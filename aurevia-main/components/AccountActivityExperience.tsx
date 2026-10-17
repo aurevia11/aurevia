@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import {useCallback,useEffect,useState} from 'react';
-import {Activity,ArrowUpRight,Building2,CircleDollarSign,Clock3,Landmark,ReceiptText,RefreshCw,ShieldCheck,TrendingDown,TrendingUp,WalletCards} from 'lucide-react';
+import {Activity,ArrowUpRight,Building2,CircleDollarSign,Landmark,ReceiptText,RefreshCw,ShieldCheck,TrendingUp,WalletCards} from 'lucide-react';
 import Nav from '@/components/Nav';
 import DisplayCurrencyPanel from '@/components/DisplayCurrencyPanel';
 import {activityCategoryLabel,type ActivityCategory,type ActivityRecord} from '@/lib/activity';
@@ -18,7 +18,6 @@ export default function AccountActivityExperience(){
   const [data,setData]=useState<ActivityResponse|null>(null);
   const [loading,setLoading]=useState(true);
   const [error,setError]=useState('');
-  const [busy,setBusy]=useState(false);
 
   const load=useCallback(async(showLoading=false)=>{
     if(showLoading)setLoading(true);
@@ -30,11 +29,11 @@ export default function AccountActivityExperience(){
   useEffect(()=>{void load(true)},[load]);
 
   function changeCategory(next:ActivityCategory){if(next!==category){setCategory(next);setError('');}}
-  function toggleLoading(){if(!busy)void load(true)}
+  function toggleLoading(){void load(true)}
   const displayValues=(data?.data.items||[]).filter(item=>(item.source!=='ledger'||item.asset==='USD')&&(item.source!=='order'||Number(item.details.filledQuantity)>0)).slice(0,5).map(item=>({label:item.action,amount:item.amount}));
 
   return <><Nav/><main className="account-page activity-page">
-    <header className="account-heading"><div><span className="account-kicker">AUDITABLE ACTIVITY</span><h1>Account activity</h1><p>Orders, trades, investments, funding, positions, and account events from persisted records.</p></div><button className="icon-action" type="button" aria-label="Refresh account activity" onClick={toggleLoading} disabled={busy}><RefreshCw size={15} className={busy?'animate-spin':''}/></button></header>
+    <header className="account-heading"><div><span className="account-kicker">AUDITABLE ACTIVITY</span><h1>Account activity</h1><p>Orders, trades, investments, funding, positions, and account events from persisted records.</p></div><button className="icon-action" type="button" aria-label="Refresh account activity" onClick={toggleLoading} disabled={loading}><RefreshCw size={15} className={loading?'animate-spin':''}/></button></header>
     {data?.accountMode==='REAL'&&<div className="account-callout mb-4"><span>REAL execution and valuation are not connected. This feed contains recorded REAL requests and ledger activity only; it does not manufacture broker confirmations.</span></div>}
     <DisplayCurrencyPanel values={displayValues}/>
     {error&&<div className="account-callout mb-4" role="alert"><span>{error}</span><button type="button" className="text-link" onClick={()=>void load(true)}>Retry</button></div>}

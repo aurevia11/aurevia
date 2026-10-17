@@ -1,5 +1,5 @@
 import {NextResponse} from 'next/server';
-import {AccountMode,ClientStoryStatus,FundingStatus,FundingType,Prisma} from '@prisma/client';
+import {ClientStoryStatus,Prisma} from '@prisma/client';
 import {z,ZodError} from 'zod';
 import {requireAdmin} from '@/lib/auth';
 import {db} from '@/lib/db';
@@ -31,7 +31,7 @@ export async function GET(){
 	try{
 		await requireAdmin();
 		const [stories,users]=await Promise.all([
-			db.clientStory.findMany({include:{user:{select:{id:true,email:true,name:true,kycStatus:true}},withdrawal:{select:{id:true,userId:true,type:true,accountMode:true,status:true,amount:true,currency:true}}},orderBy:{createdAt:'desc'}}),
+			db.clientStory.findMany({where:{deletedAt:null},include:{user:{select:{id:true,email:true,name:true,kycStatus:true}},withdrawal:{select:{id:true,userId:true,type:true,accountMode:true,status:true,amount:true,currency:true}}},orderBy:{createdAt:'desc'}}),
 			db.user.findMany({where:{role:'USER'},select:{id:true,email:true,name:true},orderBy:{createdAt:'desc'},take:500}),
 		]);
 		const history=stories.length?await db.auditLog.findMany({where:{entity:'CLIENT_STORY',entityId:{in:stories.map(story=>story.id)}},include:{actor:{select:{name:true,email:true}}},orderBy:{createdAt:'desc'},take:500}):[];
@@ -54,7 +54,7 @@ export async function PATCH(req:Request){
 		const admin=await requireAdmin();
 		const input=patchSchema.parse(await req.json());
 		const updated=await db.$transaction(async tx=>{
-			const current=await tx.clientStory.findUnique({where:{id:input.storyId}});
+			const current=await tx.clientStory.findFirst({where:{id:input.storyId,deletedAt:null}});
 			if(!current)throw new Error('STORY_NOT_FOUND');
 			const userId=input.userId===undefined?current.userId:input.userId;
 			const verifiedClient=input.verifyIdentity===undefined?current.verifiedClient:input.verifyIdentity;
@@ -92,7 +92,7 @@ export async function PATCH(req:Request){
 				source:input.source,
 				adminNote:input.adminNote,
 			};
-			const changed=await tx.clientStory.updateMany({where:{id:current.id,updatedAt:current.updatedAt},data});
+			const changed=await tx.clientStory.updateMany({where:{id:current.id,updatedAt:current.updatedAt,deletedAt:null},data});
 			if(changed.count!==1)throw new Error('STORY_CHANGED');
 			const story=await tx.clientStory.findUniqueOrThrow({where:{id:current.id},include:{user:{select:{id:true,email:true,name:true,kycStatus:true}},withdrawal:{select:{id:true,userId:true,type:true,accountMode:true,status:true,amount:true,currency:true}}}});
 			await tx.auditLog.create({data:{actorId:admin.id,action:`CLIENT_STORY_${publicationStatus}`,entity:'CLIENT_STORY',entityId:story.id,metadata:{changedFields:Object.keys(input).filter(key=>key!=='storyId'),verifiedClient,transactionVerified,consentConfirmed,publicationStatus,verifiedWithdrawalId:withdrawal?.id??null,withdrawalAmount:withdrawal?.amount.toString()??null,currency:withdrawal?.currency??null}}});
@@ -105,5 +105,28 @@ export async function PATCH(req:Request){
 		if(error instanceof Error&&error.message==='FORBIDDEN')return NextResponse.json({error:'Forbidden'},{status:403});
 		if(error instanceof Error&&['STORY_NOT_FOUND','IDENTITY_USER_REQUIRED','STORY_USER_INVALID','WITHDRAWAL_NOT_VERIFIABLE','PUBLIC_AMOUNT_REQUIRES_MATCHING_WITHDRAWAL','VERIFICATION_AND_CONSENT_REQUIRED','STORY_CHANGED'].includes(error.message))return NextResponse.json({error:error.message.replaceAll('_',' ').toLowerCase()},{status:error.message==='STORY_NOT_FOUND'?404:409});
 		return NextResponse.json({error:'Client-story review failed.'},{status:500});
+	}
+}
+
+export async function DELETE(request:Request){
+	try{
+		const admin=await requireAdmin();
+		const input=z.object({storyId:z.string().min(1)}).parse(await request.json());
+		const deleted=await db.$transaction(async tx=>{
+			const story=await tx.clientStory.findFirst({where:{id:input.storyId,deletedAt:null},select:{id:true,displayName:true,updatedAt:true}});
+			if(!story)throw new Error('STORY_NOT_FOUND');
+			const changed=await tx.clientStory.updateMany({where:{id:story.id,deletedAt:null,updatedAt:story.updatedAt},data:{deletedAt:new Date(),deletedById:admin.id}});
+			if(changed.count!==1)throw new Error('STORY_CHANGED');
+			await tx.auditLog.create({data:{actorId:admin.id,action:'CLIENT_STORY_SOFT_DELETED',entity:'CLIENT_STORY',entityId:story.id,metadata:{displayName:story.displayName,originalLocation:'/admin/content'}}});
+			return story;
+		},{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+		return NextResponse.json({deleted:true,restorable:true,id:deleted.id});
+	}catch(error){
+		if(error instanceof ZodError)return NextResponse.json({error:'Client story ID is required.'},{status:400});
+		if(error instanceof Error&&error.message==='UNAUTHORIZED')return NextResponse.json({error:'Unauthorized'},{status:401});
+		if(error instanceof Error&&error.message==='FORBIDDEN')return NextResponse.json({error:'Forbidden'},{status:403});
+		if(error instanceof Error&&error.message==='STORY_NOT_FOUND')return NextResponse.json({error:'Client story not found.'},{status:404});
+		if(error instanceof Error&&error.message==='STORY_CHANGED')return NextResponse.json({error:'Client story changed before it could be moved to Deleted Items.'},{status:409});
+		return NextResponse.json({error:'Unable to move the client story to Deleted Items.'},{status:500});
 	}
 }

@@ -18,7 +18,7 @@ export async function POST(request:Request){
     const input=waitlistSubmissionSchema.parse(await request.json());
     const entry=await db.waitlistEntry.upsert({
       where:{email:input.email},
-      update:{name:input.name,country:input.country,investorType:input.investorType,phone:input.phone??null,consent:true,source:input.source??null,updatedAt:new Date()},
+      update:{name:input.name,country:input.country,investorType:input.investorType,phone:input.phone??null,consent:true,source:input.source??null,status:'WAITING',deletedAt:null,deletedById:null,updatedAt:new Date()},
       create:{email:input.email,name:input.name,country:input.country,investorType:input.investorType,phone:input.phone??null,consent:true,source:input.source??null,status:'WAITING'},
     });
     return NextResponse.json({message:'You are on the Aurevia waitlist. Your request has been recorded.',entryId:entry.id,status:entry.status},{status:201});

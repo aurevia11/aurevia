@@ -3,7 +3,6 @@ import {KycStatus,Prisma,UserStatus} from '@prisma/client';
 import {z} from 'zod';
 import {requireAdmin} from '@/lib/auth';
 import {db} from '@/lib/db';
-import {jsonSafe} from '@/lib/serializers';
 
 const querySchema=z.object({
 	page:z.coerce.number().int().min(1).default(1),

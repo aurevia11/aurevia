@@ -31,7 +31,7 @@ function decimal(value:Prisma.Decimal|number|string|null|undefined){return value
 function formatAmount(value:Prisma.Decimal|number|string){return decimal(value).toFixed(2)}
 function formatNumber(value:Prisma.Decimal|number|string){return decimal(value).toString()}
 
-export async function getUserActivity(userId:string,accountMode:AccountMode,category:ActivityCategory,limit=20,cursor?:string):Promise<ActivityPage>{
+export async function getUserActivity(userId:string,accountMode:AccountMode,category:ActivityCategory,limit=20):Promise<ActivityPage>{
   const [ledgerEntries,orders,positions,investments,fundingRequests,auditLogs]=await Promise.all([
     db.ledgerEntry.findMany({where:{account:{userId,accountMode}},include:{account:{select:{userId:true,currency:true,accountMode:true}},transaction:{select:{reference:true,description:true,createdAt:true}}},orderBy:{createdAt:'desc'},take:limit*3}),
     db.order.findMany({where:{userId,accountMode},include:{instrument:{select:{symbol:true}},executions:{select:{quantity:true,price:true,fee:true,createdAt:true}}},orderBy:{createdAt:'desc'},take:limit*3}),

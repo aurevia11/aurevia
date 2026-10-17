@@ -32,8 +32,11 @@ Aurevia Invest is a Next.js 14 application using TypeScript, PostgreSQL, Prisma,
 - Force-close open positions
 - Instrument enable/disable and configuration API
 - System settings
+- Deleted Items recycle bin for waitlist entries, client stories, and broadcasts, with search, filtering, audited restore, and audited permanent deletion
 - Audit log
 - Realtime operational statistics
+
+Financial, identity-review, and audit records are intentionally not recyclable: account-erasure requests follow the privacy-preserving closure workflow, and immutable financial/audit history remains subject to its retention rules.
 
 ### Financial engine
 - PostgreSQL persistence
@@ -71,7 +74,7 @@ Sign-in and registration use the application's own email/username and password c
 
 ## Requirements
 
-- Node.js 20+
+- Node.js >=20.19 and <21, >=22.13 and <23, or 24+
 - Docker Desktop or PostgreSQL 15+
 - npm
 

@@ -12,7 +12,7 @@ const usd=(value:number)=>value.toLocaleString(undefined,{style:'currency',curre
 const btc=(value:number)=>`${value.toLocaleString(undefined,{minimumFractionDigits:0,maximumFractionDigits:10})} BTC`;
 
 export default function BitcoinConversionExperience(){
-	const {data:session,status}=useSession();
+	const {status}=useSession();
 	const [wallet,setWallet]=useState<WalletResponse|null>(null);
 	const [quote,setQuote]=useState<BitcoinQuote|null>(null);
 	const [direction,setDirection]=useState<'BUY'|'SELL'>('BUY');

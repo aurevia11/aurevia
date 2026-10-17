@@ -1,4 +1,4 @@
-import {AccountMode,InvestmentStatus,Prisma} from '@prisma/client';
+import {InvestmentStatus,Prisma} from '@prisma/client';
 
 export type InvestmentAction='approve'|'reject'|'activate'|'pause'|'complete'|'cancel'|'settle';
 

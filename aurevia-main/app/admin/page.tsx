@@ -1,125 +1,66 @@
-'use client';
-import {useEffect,useRef,useState} from 'react';
-import {signOut} from 'next-auth/react';
-import {LogOut,RefreshCw} from 'lucide-react';
+import Link from 'next/link';
+import {redirect} from 'next/navigation';
+import {ArrowUpRight,BriefcaseBusiness,ClipboardCheck,FileCheck2,MessageSquareText,Radio,ReceiptText,ScrollText,Settings2,Trash2,UsersRound} from 'lucide-react';
 import AdminNav from '@/components/AdminNav';
-import StatCard from '@/components/StatCard';
-import ClientStoriesPanel from '@/components/ClientStoriesPanel';
-import AdminKycReviewPanel from '@/components/AdminKycReviewPanel';
-import AdminOperationsPanel from '@/components/AdminOperationsPanel';
-import AdminReceiptReviewPanel from '@/components/AdminReceiptReviewPanel';
-import AdminProvidersPanel from '@/components/AdminProvidersPanel';
-import AdminWaitlistPanel from '@/components/AdminWaitlistPanel';
-import AdminNovaActivityPanel from '@/components/AdminNovaActivityPanel';
-import {SIMULATED_BTC_ADDRESS_SETTING} from '@/lib/config/simulated-bitcoin-address';
+import {requireAdmin} from '@/lib/auth';
 
-type Instrument={id:string;symbol:string;name:string;baseAsset:string;quoteAsset:string;price:number;leverage:number;makerFee:number;takerFee:number;enabled:boolean};
-type LoginAuditEvent={id:string;action:string;createdAt:string;metadata:{clientIp?:string|null;userAgent?:string|null;authMethod?:string;reason?:string|null}|null};
+const workspaces=[
+	{
+		title:'Workspace',
+		description:'Manage customers, investments, funding, markets, and broadcasts.',
+		links:[
+			{href:'/admin/users',label:'User accounts',description:'Search accounts, manage access, and close accounts.',icon:UsersRound},
+			{href:'/admin/content',label:'Client stories',description:'Review client story content, evidence, and publication status.',icon:Radio},
+			{href:'/admin/investments',label:'Investment operations',description:'Publish opportunities and review investment activity.',icon:BriefcaseBusiness},
+			{href:'/admin/payments',label:'Payments',description:'Review pending simulated deposits and withdrawals.',icon:ReceiptText},
+			{href:'/admin/approved-deposits',label:'Approved deposits',description:'Search approved deposit records and receipts.',icon:ReceiptText},
+			{href:'/admin/approved-withdrawals',label:'Approved withdrawals',description:'Review completed simulated withdrawals.',icon:ReceiptText},
+			{href:'/admin/settlements',label:'Settlements',description:'Inspect simulated funding settlement records.',icon:ReceiptText},
+			{href:'/admin/positions',label:'Open positions',description:'Review and force-close simulated customer positions.',icon:BriefcaseBusiness},
+			{href:'/admin/markets',label:'Market management',description:'Configure simulated instruments and market settings.',icon:Settings2},
+			{href:'/admin/settings',label:'System settings',description:'Manage audited application settings and display-only deposit configuration.',icon:Settings2},
+			{href:'/admin/deleted-items',label:'Deleted Items',description:'Search, restore, or permanently remove soft-deleted content.',icon:Trash2},
+			{href:'/admin/broadcasts',label:'Broadcasts',description:'Publish and manage customer broadcasts.',icon:Radio},
+		],
+	},
+	{
+		title:'Account review',
+		description:'Process identity and account eligibility reviews.',
+		links:[
+			{href:'/admin/kyc',label:'Pending verification',description:'Review submitted profiles and identity documents.',icon:ClipboardCheck},
+			{href:'/admin/verified-accounts',label:'Verified accounts',description:'Find accounts with completed verification.',icon:UsersRound},
+			{href:'/admin/tiers',label:'Tier reviews',description:'Review customer tier upgrade requests.',icon:FileCheck2},
+		],
+	},
+	{
+		title:'Service and system',
+		description:'Monitor service operations, support, and audit activity.',
+		links:[
+			{href:'/admin/operations',label:'Orders and ledger',description:'Inspect simulated order execution and ledger entries.',icon:ReceiptText},
+			{href:'/admin/support',label:'Support inbox',description:'Respond to customer support conversations.',icon:MessageSquareText},
+			{href:'/admin/nova',label:'Nova activity',description:'Review assistant activity and escalations.',icon:MessageSquareText},
+			{href:'/admin/waitlist',label:'Customer waitlist',description:'Review and manage waitlist entries.',icon:UsersRound},
+			{href:'/admin/providers',label:'Provider health',description:'Check configured service and market providers.',icon:Settings2},
+			{href:'/admin/receipts',label:'Receipt review',description:'Review receipt records and generated documents.',icon:ReceiptText},
+			{href:'/admin/audit-logs',label:'Audit log',description:'Search administrator and financial audit events.',icon:ScrollText},
+		],
+	},
+];
 
-export default function Admin(){
- const [stats,setStats]=useState<any>({}); const [users,setUsers]=useState<any[]>([]); const [funds,setFunds]=useState<any[]>([]); const [positions,setPositions]=useState<any[]>([]); const [settings,setSettings]=useState<any[]>([]); const [instruments,setInstruments]=useState<Instrument[]>([]); const [audit,setAudit]=useState<any[]>([]); const [msg,setMsg]=useState(''); const [fundingNotes,setFundingNotes]=useState<Record<string,string>>({}); const [fundingCreditAmounts,setFundingCreditAmounts]=useState<Record<string,string>>({});
- const [simulatedBtcAddress,setSimulatedBtcAddress]=useState('');
- const [initialLoading,setInitialLoading]=useState(true); const [refreshing,setRefreshing]=useState(false); const [loadError,setLoadError]=useState(''); const loadInFlight=useRef(false);
- const simulatedBtcAddressInitialized=useRef(false);
- const [expandedLoginUser,setExpandedLoginUser]=useState(''); const [loginHistory,setLoginHistory]=useState<Record<string,{loading:boolean;events:LoginAuditEvent[];error:string}>>({});
- const [newInstrument,setNewInstrument]=useState({symbol:'',name:'',baseAsset:'',quoteAsset:'USD',price:'1',leverage:'1',makerFee:'0.001',takerFee:'0.0015'});
- const [manualBalance,setManualBalance]=useState({userId:'',accountMode:'DEMO' as 'DEMO'|'REAL',currency:'USD',amount:'',type:'CREDIT' as 'CREDIT'|'DEBIT',note:''});
- const [manualBalanceKey,setManualBalanceKey]=useState<{fingerprint:string;value:string}|null>(null);
- const [manualUserSearch,setManualUserSearch]=useState('');
- const [manualUserOptions,setManualUserOptions]=useState<any[]>([]);
- const [manualCategory,setManualCategory]=useState('ADMIN_ALLOCATION');
- const [confirmManualBalance,setConfirmManualBalance]=useState(false);
- const [manualBalanceBusy,setManualBalanceBusy]=useState(false);
- async function logout(){await signOut({callbackUrl:'/login'});}
- async function load(){
-  if(loadInFlight.current)return;
-  loadInFlight.current=true;setRefreshing(true);
-  try{
-   const responses=await Promise.all([fetch('/api/admin/stats'),fetch('/api/admin/users'),fetch('/api/admin/funding'),fetch('/api/admin/positions'),fetch('/api/admin/settings'),fetch('/api/admin/instruments'),fetch('/api/admin/audit')]);
-   if(responses.some(response=>!response.ok))throw new Error('Unable to load all administrator data.');
-   const [nextStats,nextUsers,nextFunds,nextPositions,nextSettings,nextInstruments,nextAudit]=await Promise.all(responses.map(response=>response.json()));
-  setStats(nextStats);setUsers(nextUsers);setManualUserOptions(nextUsers);setFunds([]);setPositions(nextPositions);setSettings(nextSettings);if(!simulatedBtcAddressInitialized.current){setSimulatedBtcAddress(nextSettings.find((setting:{key:string})=>setting.key===SIMULATED_BTC_ADDRESS_SETTING)?.value||'');simulatedBtcAddressInitialized.current=true}setInstruments(nextInstruments);setAudit(nextAudit);setLoadError('');
-  }catch(exception){setLoadError(exception instanceof Error?exception.message:'Unable to load administrator data.')}
-  finally{loadInFlight.current=false;setRefreshing(false);setInitialLoading(false)}
- }
- useEffect(()=>{load();const t=setInterval(load,10000);return()=>clearInterval(t)},[]);
- useEffect(()=>{const query=manualUserSearch.trim();if(!query){setManualUserOptions(users);return}const controller=new AbortController();const timer=window.setTimeout(async()=>{try{const response=await fetch(`/api/admin/users?search=${encodeURIComponent(query)}`,{cache:'no-store',signal:controller.signal});if(!response.ok)throw new Error('User search failed.');setManualUserOptions(await response.json())}catch(error){if(!(error instanceof DOMException&&error.name==='AbortError'))setMsg('Unable to search users. Please retry.')}},250);return()=>{window.clearTimeout(timer);controller.abort()}},[manualUserSearch,users]);
- async function toggleLoginHistory(userId:string){
-  if(expandedLoginUser===userId){setExpandedLoginUser('');return;}
-  setExpandedLoginUser(userId);
-  if(loginHistory[userId])return;
-  setLoginHistory(current=>({...current,[userId]:{loading:true,events:[],error:''}}));
-  try{
-   const response=await fetch(`/api/admin/audit?loginUserId=${encodeURIComponent(userId)}`,{cache:'no-store'});
-   const result=await response.json();
-   if(!response.ok)throw new Error(result.error||'Unable to load login history.');
-   setLoginHistory(current=>({...current,[userId]:{loading:false,events:result,error:''}}));
-  }catch{
-   setLoginHistory(current=>({...current,[userId]:{loading:false,events:[],error:'Unable to load login history.'}}));
-  }
- }
- async function userPatch(userId:string,field:string,value:unknown){setMsg('');try{const r=await fetch('/api/admin/users',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({userId,[field]:value})});const result=await r.json();if(!r.ok)throw new Error(result.error||'User update failed.');setMsg('User updated.');await load()}catch(exception){setMsg(exception instanceof Error?exception.message:'Unable to update user. Check the server connection and try again.')}}
- async function forceClose(positionId:string){const r=await fetch('/api/admin/positions',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({positionId})});setMsg(r.ok?'Position closed':'Force close failed');load()}
- async function saveSetting(key:string,value:string){try{const r=await fetch('/api/admin/settings',{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify({key,value})});const result=await r.json();if(!r.ok)throw new Error(result.error||'Setting failed');setMsg('Setting saved.');await load()}catch(error){setMsg(error instanceof Error?error.message:'Unable to save setting.')}}
- async function review(id:string,decision:string,note='',creditedAmount?:string){const r=await fetch('/api/admin/funding',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({id,decision,note,...(creditedAmount?.trim()?{creditedAmount:Number(creditedAmount)}:{})})});const j=await r.json();setMsg(r.ok?decision==='APPROVED'&&creditedAmount?.trim()?'Deposit approved and credited to the user ledger.':'Funding reviewed':j.error||'Review failed');load()}
- async function openFundingReceipt(id:string){try{const response=await fetch(`/api/admin/funding/${encodeURIComponent(id)}/receipt`,{cache:'no-store'});const result=await response.json();if(!response.ok)throw new Error(result.error||'Receipt unavailable.');window.open(result.url,'_blank','noopener,noreferrer')}catch(error){setMsg(error instanceof Error?error.message:'Receipt unavailable.')}}
- async function instrumentPatch(id:string,data:Partial<Instrument>){const r=await fetch('/api/admin/instruments',{method:'PATCH',headers:{'content-type':'application/json'},body:JSON.stringify({id,...data})});setMsg(r.ok?'Instrument updated':(await r.json()).error||'Instrument update failed');load()}
- async function createInstrument(){const p={...newInstrument,price:Number(newInstrument.price),leverage:Number(newInstrument.leverage),makerFee:Number(newInstrument.makerFee),takerFee:Number(newInstrument.takerFee),enabled:true};const r=await fetch('/api/admin/instruments',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(p)});const j=await r.json();setMsg(r.ok?'Instrument created':j.error||'Create failed');if(r.ok)setNewInstrument({symbol:'',name:'',baseAsset:'',quoteAsset:'USD',price:'1',leverage:'1',makerFee:'0.001',takerFee:'0.0015'});load()}
- async function adjustUserBalance(){
-  if(manualBalanceBusy)return;
-  if(!manualBalance.userId||!manualBalance.amount.trim()||manualBalance.note.trim().length<3){
-   setMsg('Select a user, enter an amount, and provide a reason of at least three characters.');
-   return;
-  }
-  const amount=Number(manualBalance.amount);
-  if(!Number.isFinite(amount)||amount<=0){
-   setMsg('The balance adjustment must be a positive numeric amount.');
-   return;
-  }
-  const fingerprint=JSON.stringify({...manualBalance,manualCategory});
-  const idempotencyKey=manualBalanceKey?.fingerprint===fingerprint?manualBalanceKey.value:crypto.randomUUID();
-  setManualBalanceKey({fingerprint,value:idempotencyKey});
-  setManualBalanceBusy(true);
-  try{
-   const response=await fetch('/api/admin/balances',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({userId:manualBalance.userId,accountMode:manualBalance.accountMode,currency:manualBalance.currency,amount:manualBalance.amount,direction:manualBalance.type,category:manualCategory,reason:manualBalance.note.trim(),idempotencyKey})});
-   const result=await response.json();
-   setMsg(response.ok?`${result.replayed?'Previously recorded':'Recorded'} ${manualBalance.type.toLowerCase()} of ${amount.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})} ${manualBalance.currency} in ${manualBalance.accountMode}. Reference: ${result.reference}${manualBalance.accountMode==='REAL'?' (administrative ledger entry; not settled funds).':''}`:result.error||'Balance adjustment failed');
-   if(response.ok){setManualBalance(current=>({...current,amount:'',note:''}));setManualBalanceKey(null);setConfirmManualBalance(false);await load();}
-  }catch{setMsg('Balance adjustment failed. Retry the same confirmed request.')}
-  finally{setManualBalanceBusy(false)}
- }
- return <><AdminNav/><main className="mx-auto max-w-screen-2xl px-4 py-6"><div className="flex flex-wrap items-end justify-between gap-3"><div><div className="gold text-xs font-bold tracking-[.25em]">CONTROL CENTER</div><h1 className="text-3xl font-black">Aurevia administration</h1><p className="mt-1 text-sm muted">Account oversight, funding decisions, and simulated trading operations.</p></div><div className="flex min-w-0 flex-wrap gap-2"><button className="btn min-h-11 bg-white/5" type="button" disabled={refreshing} aria-busy={refreshing} onClick={()=>void load()}><RefreshCw size={15}/>{refreshing?'Refreshing…':'Refresh data'}</button></div></div>{msg&&<p className="mt-2 muted" role="status">{msg}</p>}
- {initialLoading&&<p className="mt-3 min-h-8 text-sm muted" role="status">Loading control center data…</p>}
- {loadError&&<div className="account-callout mt-3" role="alert"><span>{loadError}</span><button className="text-link" type="button" disabled={refreshing} onClick={()=>void load()}>Retry</button></div>}
- <nav className="admin-anchor-nav" aria-label="Control room sections"><a href="#overview">Overview</a><a href="/admin/payments">Funding review</a><a href="#providers">Provider health</a><a href="#operations">Orders and ledger</a><a href="#kyc-verification">Verification queue</a><a href="#nova-activity">Activity</a><a href="#waitlist">Waitlist</a><a href="#audit-log">Audit log</a></nav>
- <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4"><div><b>Internal simulated funding</b><p className="mt-1 text-sm muted">Review both account modes, apply admin decisions, and inspect persisted transaction history.</p></div><a href="/admin/payments" className="btn min-h-11 bg-gold text-black">Open funding review</a></div>
- <div id="overview" className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4"><StatCard label="Users" value={String(stats.users??0)}/><StatCard label="DEMO users" value={String(stats.demoUsers??0)}/><StatCard label="REAL users" value={String(stats.realUsers??0)}/><StatCard label="Pending KYC" value={String(stats.pendingKyc??0)}/><StatCard label="Pending investments" value={String(stats.pendingInvestments??0)}/><StatCard label="Active / paused investments" value={String(stats.activeInvestments??0)}/><StatCard label="Open DEMO orders" value={String(stats.openOrders??0)}/><StatCard label="Enabled markets · feed" value={`${stats.enabledMarkets??0} · ${stats.marketDataMode||'unknown'}`}/><StatCard label="Demo executed quantity" value={Number(stats.volume??0).toFixed(4)}/> <StatCard label="Demo trading fees" value={`$${Number(stats.fees??0).toFixed(2)}`}/><StatCard label="Demo open positions" value={String(stats.positions??0)}/><StatCard label="Demo pending USD deposits" value={`$${Number(stats.demoDeposits??0).toFixed(2)}`}/><StatCard label="Demo pending USD withdrawals" value={`$${Number(stats.demoWithdrawals??0).toFixed(2)}`}/><StatCard label="Real pending USD deposits" value={`$${Number(stats.realDeposits??0).toFixed(2)}`}/><StatCard label="Real pending USD withdrawals" value={`$${Number(stats.realWithdrawals??0).toFixed(2)}`}/></div>
- <div className="mt-5 grid gap-4 lg:grid-cols-2">
-    <section className="card p-5"><h2 className="font-bold">Funding queue</h2>{funds.length?funds.map(f=><div key={f.id} className="border-b border-white/10 py-4"><div className="flex flex-wrap justify-between gap-2"><span className="break-all">{f.user.email} · {f.accountMode==='REAL'?'SIMULATED / CONFIGURED REAL':f.accountMode}</span><span>{f.type} {Number(f.amount).toLocaleString()} {f.currency}</span></div><small className="muted break-all">{f.id} · {f.paymentMethod?.name||f.method} · {f.status.replaceAll('_',' ')}</small>{f.type==='DEPOSIT'&&<p className="mt-2 text-xs muted">{f.hasReceipt?'Payment screenshot evidence attached':'Payment screenshot evidence missing'}</p>}{f.accountMode==='REAL'&&f.type==='DEPOSIT'&&<p className="mt-2 text-xs muted">Internal simulated/configured balance request. Approval posts a ledger credit only; no payment is processed and no money moves.</p>}{f.accountMode==='DEMO'&&<p className="mt-2 text-xs text-amber-200">DEMO deposits and withdrawals are unavailable. This historical request cannot be approved.</p>}<details className="mt-2"><summary className="min-h-11 cursor-pointer py-2 text-sm gold">Request details and review note</summary><dl className="grid gap-2 break-words text-xs sm:grid-cols-2"><div><dt className="muted">User reference</dt><dd>{f.transactionReference||'Not provided'}</dd></div><div><dt className="muted">Reference details</dt><dd>{f.referenceInfo||'Not provided'}</dd></div><div><dt className="muted">Sender</dt><dd>{f.senderInfo||'Not provided'}</dd></div><div><dt className="muted">Destination</dt><dd>{f.destinationInfo||'Not provided'}</dd></div><div><dt className="muted">Beneficiary</dt><dd>{f.beneficiaryInfo||'Not provided'}</dd></div><div><dt className="muted">Network</dt><dd>{f.network||'Not provided'}</dd></div><div className="sm:col-span-2"><dt className="muted">User note</dt><dd>{f.note||'Not provided'}</dd></div></dl>{f.hasReceipt&&<button type="button" className="text-link mt-3" onClick={()=>void openFundingReceipt(f.id)}>View private payment evidence</button>}<label className="mt-3 block text-xs muted">Admin note<input className="input mt-1 min-h-11" value={fundingNotes[f.id]||''} maxLength={500} onChange={event=>setFundingNotes(current=>({...current,[f.id]:event.target.value}))}/></label>{f.type==='DEPOSIT'&&<label className="mt-3 block text-xs muted">{f.accountMode==='REAL'?'Configured REAL amount to credit':'Amount to credit'}<input className="input mt-1 min-h-11" type="number" min="0.01" max={Number(f.amount)} step="any" value={fundingCreditAmounts[f.id]??String(f.amount)} onChange={event=>setFundingCreditAmounts(current=>({...current,[f.id]:event.target.value}))}/></label>}</details><div className="mt-2 flex flex-wrap gap-2"><button className="btn min-h-11 bg-profit px-4 text-black" disabled={f.accountMode==='DEMO'} onClick={()=>review(f.id,'APPROVED',fundingNotes[f.id]||'',f.type==='DEPOSIT'?fundingCreditAmounts[f.id]||String(f.amount):undefined)}>{f.accountMode==='REAL'&&f.type==='DEPOSIT'?`Approve & Credit SIMULATED REAL $${Number(fundingCreditAmounts[f.id]||f.amount).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`:f.accountMode==='DEMO'?'DEMO funding unavailable':'Approve'}</button><button className="btn min-h-11 bg-loss px-4" onClick={()=>review(f.id,'REJECTED',fundingNotes[f.id]||'')}>Reject</button></div></div>):<p className="mt-4 muted">Queue is empty.</p>}</section>
-  <section className="card p-5"><h2 className="font-bold">Users</h2><div className="mt-3 max-h-[520px] overflow-auto">{users.map(u=><div key={u.id} className="border-b border-white/10 py-3"><div className="flex flex-wrap justify-between gap-2"><span>{u.email}</span><span className="muted">{u.role} · {u.accountMode} · {u.kycStatus}</span></div><div className="mt-2 flex flex-wrap gap-2"><button className="btn bg-white/5" onClick={()=>userPatch(u.id,'status',u.status==='ACTIVE'?'FROZEN':'ACTIVE')}>{u.status==='ACTIVE'?'Freeze':'Unfreeze'}</button><button className="btn bg-white/5" onClick={()=>userPatch(u.id,'kycStatus','APPROVED')}>Approve KYC</button><button className="btn bg-white/5" onClick={()=>userPatch(u.id,'kycStatus','REJECTED')}>Reject KYC</button><button className="btn bg-white/5" onClick={()=>userPatch(u.id,'kycStatus','NEEDS_CHANGES')}>Request KYC changes</button><button className="btn bg-white/5" onClick={()=>userPatch(u.id,'role',u.role==='ADMIN'?'USER':'ADMIN')}>{u.role==='ADMIN'?'Make user':'Make admin'}</button><button className="btn bg-white/5" type="button" aria-expanded={expandedLoginUser===u.id} onClick={()=>void toggleLoginHistory(u.id)}>{expandedLoginUser===u.id?'Hide login history':'Login history'}</button></div>{expandedLoginUser===u.id&&<div className="mt-3 rounded-md border border-white/10 bg-black/10 p-3" aria-label={`Login history for ${u.email}`}>{loginHistory[u.id]?.loading?<p className="muted text-sm" role="status">Loading login history…</p>:loginHistory[u.id]?.error?<p className="text-sm text-loss" role="alert">{loginHistory[u.id].error}</p>:loginHistory[u.id]?.events.length?loginHistory[u.id].events.map(event=><div className="grid gap-1 border-b border-white/10 py-2 text-xs sm:grid-cols-2" key={event.id}><span>{new Date(event.createdAt).toLocaleString()} · {event.action.replace('LOGIN_','')}</span><span>IP: {event.metadata?.clientIp||'Not available'} · {event.metadata?.authMethod||'credentials'}</span><span className="break-all muted sm:col-span-2">{event.metadata?.userAgent||'User agent not available'}</span></div>):<p className="muted text-sm">No recorded login attempts.</p>}</div>}</div>)}</div></section>
-    <section className="card p-5">
-      <div className="mb-3 flex items-center justify-between gap-2"><h2 className="font-bold">Administrative account adjustment</h2><span className="status-pill">{manualBalance.accountMode==='REAL'?'ADMINISTRATIVE REAL LEDGER':'DEMO VIRTUAL LEDGER'}</span></div>
-      <p className="mb-3 text-sm muted">Credits and debits here are internal simulated ledger operations for both account modes. They do not represent external payments or held assets. Debits cannot consume funds reserved for pending simulated withdrawals.</p>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <label className="block sm:col-span-2"><span className="mb-1 block text-xs uppercase tracking-wider muted">Find user by name, email, or user ID</span><input className="input" value={manualUserSearch} onChange={event=>setManualUserSearch(event.target.value)} placeholder="Search name, email, or ID" autoComplete="off"/></label>
-        <label className="block sm:col-span-2"><span className="mb-1 block text-xs uppercase tracking-wider muted">Customer account</span><select className="input" value={manualBalance.userId} onChange={event=>{setManualBalance(current=>({...current,userId:event.target.value}));setConfirmManualBalance(false)}}><option value="">Select a user</option>{manualUserOptions.map(user=><option key={user.id} value={user.id}>{user.name||user.email} · {user.email} · {user.id}</option>)}</select></label>
-        <label className="block"><span className="mb-1 block text-xs uppercase tracking-wider muted">Account mode</span><select className="input" value={manualBalance.accountMode} onChange={event=>setManualBalance(current=>{const accountMode=event.target.value as 'DEMO'|'REAL';return {...current,accountMode,type:accountMode==='REAL'?'CREDIT':current.type,note:''}})}><option value="REAL">REAL</option><option value="DEMO">DEMO</option></select></label>
-        <label className="block"><span className="mb-1 block text-xs uppercase tracking-wider muted">Action</span><select className="input" value={manualBalance.type} onChange={event=>{setManualBalance(current=>({...current,type:event.target.value as 'CREDIT'|'DEBIT'}));setConfirmManualBalance(false)}}><option value="CREDIT">Credit simulated balance</option><option value="DEBIT">Debit simulated balance</option></select></label>
-        <label className="block"><span className="mb-1 block text-xs uppercase tracking-wider muted">Category</span><select className="input" value={manualCategory} onChange={event=>{setManualCategory(event.target.value);setConfirmManualBalance(false)}}><option value="ADMIN_ALLOCATION">Administrative allocation</option><option value="CORRECTION">Correction</option><option value="PROMOTIONAL">Promotional virtual credit</option><option value="REVERSAL">Reversal</option></select></label>
-        <label className="block"><span className="mb-1 block text-xs uppercase tracking-wider muted">Currency</span><select className="input" value={manualBalance.currency} onChange={event=>{setManualBalance(current=>({...current,currency:event.target.value}));setConfirmManualBalance(false)}}>{['USD','EUR','GBP','NGN','CAD','AUD','CHF','JPY'].map(currency=><option key={currency}>{currency}</option>)}</select></label>
-        <label className="block"><span className="mb-1 block text-xs uppercase tracking-wider muted">Amount</span><input className="input" type="number" min="0.01" max="99999999.99" step="0.01" inputMode="decimal" placeholder="999.00" value={manualBalance.amount} onChange={event=>{setManualBalance(current=>({...current,amount:event.target.value}));setConfirmManualBalance(false)}}/></label>
-        <label className="block sm:col-span-2"><span className="mb-1 block text-xs uppercase tracking-wider muted">Reason (required; retained in the audit trail)</span><input className="input" maxLength={300} minLength={3} required value={manualBalance.note} onChange={event=>{setManualBalance(current=>({...current,note:event.target.value}));setConfirmManualBalance(false)}} placeholder="Explain the authorization and purpose"/></label>
-      </div>
-      {confirmManualBalance?<div className="mt-4 rounded-lg border border-gold/30 p-4" role="group" aria-label="Confirm administrative account adjustment">
-        <p className="font-semibold">Confirm {manualBalance.type.toLowerCase()} · {manualBalance.accountMode} · {manualBalance.currency} {Number(manualBalance.amount||0).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}</p>
-        <p className="mt-1 text-sm muted">{manualUserOptions.find(user=>user.id===manualBalance.userId)?.name||manualUserOptions.find(user=>user.id===manualBalance.userId)?.email||manualBalance.userId} · {manualCategory.replaceAll('_',' ')} · {manualBalance.note}</p>
-        <div className="mt-3 flex flex-wrap gap-2"><button type="button" className="btn min-h-11 bg-gold text-black" disabled={manualBalanceBusy} aria-busy={manualBalanceBusy} onClick={()=>void adjustUserBalance()}>{manualBalanceBusy?'Recording…':'Confirm adjustment'}</button><button type="button" className="btn min-h-11 bg-white/5" disabled={manualBalanceBusy} onClick={()=>setConfirmManualBalance(false)}>Cancel</button></div>
-      </div>:<button type="button" className="btn mt-3 min-h-11 bg-gold text-black" disabled={!manualBalance.userId||!manualBalance.amount.trim()||manualBalance.note.trim().length<3||manualBalance.accountMode==='REAL'&&manualBalance.type!=='CREDIT'} onClick={()=>{const amount=Number(manualBalance.amount);if(Number.isFinite(amount)&&amount>0&&manualBalance.note.trim().length>=3)setConfirmManualBalance(true);else setMsg('Select a user, enter a positive amount, and provide a reason.')}}>Review adjustment</button>}
-    </section>
-  <section className="card p-5"><h2 className="font-bold">Open positions</h2>{positions.length?positions.map(p=><div key={p.id} className="flex items-center justify-between gap-3 border-b border-white/10 py-3"><span>{p.user.email} · {p.accountMode} · {p.instrument.symbol} · {p.side}</span><button className="btn bg-loss" disabled={p.accountMode==='REAL'} title={p.accountMode==='REAL'?'External REAL settlement is not connected.':'Close simulated position'} onClick={()=>forceClose(p.id)}>{p.accountMode==='REAL'?'External close unavailable':'Force close DEMO'}</button></div>):<p className="mt-4 muted">No open positions.</p>}</section>
-  <section className="card p-5"><h2 className="font-bold">Instrument management</h2><div className="mt-4 grid gap-2 sm:grid-cols-2"><input className="input" placeholder="Symbol" value={newInstrument.symbol} onChange={e=>setNewInstrument({...newInstrument,symbol:e.target.value.toUpperCase()})}/><input className="input" placeholder="Name" value={newInstrument.name} onChange={e=>setNewInstrument({...newInstrument,name:e.target.value})}/><input className="input" placeholder="Base asset" value={newInstrument.baseAsset} onChange={e=>setNewInstrument({...newInstrument,baseAsset:e.target.value.toUpperCase()})}/><input className="input" placeholder="Quote asset" value={newInstrument.quoteAsset} onChange={e=>setNewInstrument({...newInstrument,quoteAsset:e.target.value.toUpperCase()})}/><input className="input" type="number" placeholder="Price" value={newInstrument.price} onChange={e=>setNewInstrument({...newInstrument,price:e.target.value})}/><input className="input" type="number" placeholder="Leverage" value={newInstrument.leverage} onChange={e=>setNewInstrument({...newInstrument,leverage:e.target.value})}/><input className="input" type="number" step="0.000001" placeholder="Maker fee" value={newInstrument.makerFee} onChange={e=>setNewInstrument({...newInstrument,makerFee:e.target.value})}/><input className="input" type="number" step="0.000001" placeholder="Taker fee" value={newInstrument.takerFee} onChange={e=>setNewInstrument({...newInstrument,takerFee:e.target.value})}/></div><button className="btn mt-3 bg-gold text-black" onClick={createInstrument}>Add instrument</button><div className="mt-5 space-y-2">{instruments.map(i=><div key={i.id} className="rounded-xl bg-white/5 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><span className="font-bold">{i.symbol} · {Number(i.price).toLocaleString()}</span><button className="btn bg-white/5" onClick={()=>instrumentPatch(i.id,{enabled:!i.enabled})}>{i.enabled?'Disable':'Enable'}</button></div><div className="mt-2 grid grid-cols-2 gap-2"><input className="input" type="number" value={i.price} onChange={e=>setInstruments(xs=>xs.map(x=>x.id===i.id?{...x,price:Number(e.target.value)}:x))}/><input className="input" type="number" value={i.leverage} onChange={e=>setInstruments(xs=>xs.map(x=>x.id===i.id?{...x,leverage:Number(e.target.value)}:x))}/></div><button className="btn mt-2 bg-white/5" onClick={()=>instrumentPatch(i.id,{price:Number(i.price),leverage:Number(i.leverage)})}>Save market settings</button></div>)}</div></section>
-  <section className="card p-5"><h2 className="font-bold">Simulated BTC deposit display</h2><p className="mt-2 text-sm muted">Configure an address for the simulated wallet page to display with copy and QR options. This is display-only: do not use it to receive real Bitcoin. The platform does not monitor the network or process transfers.</p><label className="account-label mt-4 block">Bitcoin mainnet address<input className="input mt-1" aria-label="Simulated Bitcoin display address" maxLength={90} value={simulatedBtcAddress} onChange={event=>setSimulatedBtcAddress(event.target.value)} placeholder="Leave blank to hide the address"/></label><button type="button" className="btn mt-3 min-h-11 bg-gold text-black" onClick={()=>void saveSetting(SIMULATED_BTC_ADDRESS_SETTING,simulatedBtcAddress.trim())}>Save simulated BTC address</button><p className="mt-2 text-xs muted">Users must acknowledge copying or scanning this display before their simulated deposit request can enter review.</p></section>
-  <section className="card p-5"><h2 className="font-bold">System settings</h2>{settings.filter(x=>x.key!==SIMULATED_BTC_ADDRESS_SETTING).length?settings.filter(x=>x.key!==SIMULATED_BTC_ADDRESS_SETTING).map(x=><div key={x.key} className="flex items-center gap-3 border-b border-white/10 py-3"><span className="min-w-40 text-sm">{x.key}</span><input className="input" defaultValue={x.value} onBlur={e=>saveSetting(x.key,e.currentTarget.value)}/></div>):<p className="mt-4 muted">No settings yet.</p>}</section>
-  <section id="audit-log" className="card p-5 lg:col-span-2"><h2 className="font-bold">Audit and notification events</h2><div className="mt-3 max-h-80 overflow-auto">{audit.length?audit.map(x=><div key={x.id} className="border-b border-white/10 py-2 text-xs"><span>{new Date(x.createdAt).toLocaleString()}</span> · <span className="gold">{x.action}</span> · {x.entity} {x.summary?`· ${x.summary}`:''}</div>):<p className="muted">No recorded events yet.</p>}</div></section>
- </div><section className="mt-6"><header className="mb-3"><h2 className="text-lg font-bold">Review queues and monitoring</h2><p className="mt-1 text-sm muted">Identity, provider, activity, receipt, and customer-submission review.</p></header><div className="grid gap-4"><ClientStoriesPanel/><AdminKycReviewPanel/><AdminProvidersPanel/><AdminOperationsPanel/><AdminNovaActivityPanel/><AdminReceiptReviewPanel/><AdminWaitlistPanel/></div></section></main></>
+export default async function Admin(){
+	try{await requireAdmin()}catch{redirect('/admin/login')}
+	return <><AdminNav/><main className="account-page">
+		<header className="account-heading"><div><span className="account-kicker">CONTROL CENTER</span><h1>Aurevia administration</h1><p>Choose a dedicated workspace for each administrative duty.</p></div></header>
+		<div className="space-y-5">
+			{workspaces.map((group,index)=><section className="account-panel p-4 sm:p-5" key={group.title} aria-labelledby={`workspace-${group.title.replaceAll(' ','-').toLowerCase()}`}>
+				<header className="mb-4 flex flex-wrap items-end justify-between gap-2"><div><span className="account-kicker">WORKSPACE {String(index+1).padStart(2,'0')}</span><h2 id={`workspace-${group.title.replaceAll(' ','-').toLowerCase()}`} className="mt-1 text-lg font-bold">{group.title}</h2><p className="mt-1 text-sm muted">{group.description}</p></div><span className="text-xs muted">{group.links.length} destinations</span></header>
+				<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+					{group.links.map(({href,label,description,icon:Icon})=><Link key={href} href={href} className="card group flex min-h-28 items-start gap-3 p-4 transition hover:border-amber-300/50 hover:bg-white/[.04] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300">
+						<span className="rounded-lg border border-white/10 bg-white/[.04] p-2 text-amber-300"><Icon size={18} aria-hidden="true"/></span>
+						<span className="min-w-0 flex-1"><span className="flex items-center justify-between gap-2 font-semibold">{label}<ArrowUpRight size={15} className="shrink-0 opacity-60 transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5" aria-hidden="true"/></span><span className="mt-1 block text-sm muted">{description}</span></span>
+					</Link>)}
+				</div>
+			</section>)}
+		</div>
+	</main></>;
 }

@@ -35,7 +35,7 @@ export async function POST(req:Request){
 		stage='hash-password';
 		const passwordHash=await bcrypt.hash(p.password,12);
 		stage='registration-transaction';
-		const user=await db.$transaction(async tx=>{
+		await db.$transaction(async tx=>{
 			stage='create-user';
 			const created=await tx.user.create({data:{email,passwordHash,name:p.name,country:p.country,phone:p.phone||null,accountMode:p.accountMode,requiresRegistrationVerification:false,termsAcceptedAt:new Date()}});
 			stage='link-waitlist';
@@ -51,7 +51,6 @@ export async function POST(req:Request){
 			await createNotification(tx,{userId:created.id,type:NotificationType.ACCOUNT,title:'Account registration received',message:'Your account is ready for email and password sign-in. No external sign-in or contact-verification provider is required.',dedupeKey:`registration:${created.id}:created`,actionUrl:'/dashboard'});
 			stage='notify-active-admins';
 			await notifyActiveAdmins(tx,{type:NotificationType.ACCOUNT,title:'New account registration',message:`A new ${created.accountMode.toLowerCase()} account registration is awaiting review.`,dedupeKey:`registration:${created.id}:admin`,relatedEntity:'USER',relatedId:created.id,actionUrl:'/admin'});
-			return created;
 		},{maxWait:10000,timeout:15000});
 		return NextResponse.json({message:'Account created. Sign in with your email and password.',verificationRequired:false,authMethod:'credentials'},{status:201});
 	}catch(error){

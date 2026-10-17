@@ -22,7 +22,7 @@ export async function POST(request:Request){
 		const storyId=storyIdSchema.parse(form.get('storyId'));
 		const file=form.get('file');
 		if(!(file instanceof File)||file.size===0||file.size>maxUploadBytes)return NextResponse.json({error:'Choose an image no larger than 5 MB.'},{status:400});
-		const story=await db.clientStory.findUnique({where:{id:storyId},select:{id:true}});
+		const story=await db.clientStory.findFirst({where:{id:storyId,deletedAt:null},select:{id:true}});
 		if(!story)return NextResponse.json({error:'Client story not found.'},{status:404});
 		const bytes=Buffer.from(await file.arrayBuffer());
 		const contentType=detectImageType(bytes);

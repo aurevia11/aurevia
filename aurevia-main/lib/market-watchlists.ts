@@ -36,7 +36,7 @@ function defaultWatchlistState(state:MarketWatchlistState){
   return {...state,watchlists:[{...initialWatchlist,symbols:[...initialWatchlist.symbols]}],activeWatchlistId:initialWatchlist.id,selectedSymbol:'DJI'};
 }
 
-export const useMarketWatchlists=create<MarketWatchlistState>()(persist((set,get)=>({
+export const useMarketWatchlists=create<MarketWatchlistState>()(persist(set=>({
   watchlists:[initialWatchlist],
   activeWatchlistId:initialWatchlist.id,
   selectedSymbol:'DJI',

@@ -1,7 +1,5 @@
 import {Prisma} from '@prisma/client';
 
-const Decimal=Prisma.Decimal;
-
 export function assertFreshQuote(observedAt:string|Date,now=Date.now()){
  const timestamp=observedAt instanceof Date?observedAt.getTime():Date.parse(observedAt);
  if(!Number.isFinite(timestamp)||now-timestamp>30_000||timestamp-now>5_000)throw new Error('STALE_MARKET_QUOTE');

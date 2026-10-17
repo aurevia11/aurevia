@@ -5,8 +5,9 @@ import Nav from "@/components/Nav";
 import { useLocale } from "@/lib/i18n-context";
 import PriceChart from "@/components/PriceChart";
 import { useTradingStore } from "@/lib/store";
-import { ArrowDownRight, ChartNoAxesCombined, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 type I = { id: string; symbol: string; price: number; change?: number; takerFee?: number; leverage?: number; updatedAt?:string; lastUpdatedAt?:string };
+type NumericValue=number|string;
 type Order = {
   id: string;
   status: string;
@@ -26,6 +27,15 @@ type Pos = {
   margin: number;
   instrument: { symbol: string; price: number };
 };
+type PositionResponse=Omit<Pos,"quantity"|"entryPrice"|"margin"|"instrument">&{
+  quantity:NumericValue;
+  entryPrice:NumericValue;
+  margin:NumericValue;
+  instrument:{symbol:string;price:NumericValue};
+};
+type WalletResponse={accountMode:"DEMO"|"REAL";balance:NumericValue};
+type OrderBookLevel={price:number;quantity:number};
+type OrderBook={bids?:OrderBookLevel[];asks?:OrderBookLevel[]};
 export default function Trade() {
   const { translate } = useLocale();
   const {data:session,status:sessionStatus}=useSession();
@@ -39,7 +49,7 @@ export default function Trade() {
   const [msg, setMsg] = useState("");
   const [orders, setOrders] = useState<Order[]>([]);
   const [positions, setPositions] = useState<Pos[]>([]);
-  const [book, setBook] = useState<any>({ bids: [], asks: [] });
+  const [book, setBook] = useState<OrderBook>({ bids: [], asks: [] });
   const [availableBalance, setAvailableBalance] = useState<number | null>(null);
   const [accountMode, setAccountMode] = useState<'DEMO'|'REAL'|'LOADING'>('LOADING');
   const [placing, setPlacing] = useState(false);
@@ -61,19 +71,22 @@ export default function Trade() {
         ]);
         if (responses.some((response) => !response.ok))
           throw new Error("Unable to load trading data.");
-        const [market, orderData, positionData, walletData] = await Promise.all(
-          responses.map((response) => response.json()),
-        );
+        const [market,orderData,positionData,walletData]=await Promise.all([
+          responses[0].json() as Promise<I[]>,
+          responses[1].json() as Promise<Order[]>,
+          responses[2].json() as Promise<PositionResponse[]>,
+          responses[3].json() as Promise<WalletResponse>,
+        ]);
         if (!active) return;
         setItems(
-          market.map((item: I & {lastUpdatedAt?:string}) => ({ ...item, price: Number(item.price),updatedAt:item.lastUpdatedAt||item.updatedAt })),
+          market.map((item) => ({ ...item, price: Number(item.price),updatedAt:item.lastUpdatedAt||item.updatedAt })),
         );
         if (market[0]) setSelected(market[0].id);
         setOrders(orderData);
         setAccountMode(walletData.accountMode);
         setAvailableBalance(Number(walletData.balance));
         setPositions(
-          positionData.map((position: any) => ({
+          positionData.map((position) => ({
             ...position,
             quantity: Number(position.quantity),
             entryPrice: Number(position.entryPrice),
@@ -227,7 +240,7 @@ export default function Trade() {
                   {book.asks
                     ?.slice()
                     .reverse()
-                    .map((x: any) => (
+                    .map((x) => (
                       <div
                         key={x.price}
                         className="flex justify-between text-loss"
@@ -237,7 +250,7 @@ export default function Trade() {
                       </div>
                     ))}
                   <div className="my-2 border-t border-white/10" />
-                  {book.bids?.map((x: any) => (
+                  {book.bids?.map((x) => (
                     <div
                       key={x.price}
                       className="flex justify-between text-profit"

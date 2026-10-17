@@ -7,7 +7,25 @@ import {ArrowLeft,Clock3,FileClock,ShieldCheck} from 'lucide-react';
 import Nav from '@/components/Nav';
 import DisplayCurrencyPanel from '@/components/DisplayCurrencyPanel';
 
-type Detail={transaction:Record<string,any>;history:Array<{action:string;createdAt:string;actor?:{name?:string|null;role:string}|null}>};
+type FundingTransaction={
+	id:string;
+	accountMode:'DEMO'|'REAL';
+	type:'DEPOSIT'|'WITHDRAWAL';
+	amount:string|number;
+	creditedAmount:string|number|null;
+	currency:string;
+	status:string;
+	method:string;
+	createdAt:string;
+	updatedAt:string;
+	transactionReference:string|null;
+	referenceInfo:string|null;
+	note:string|null;
+	reviewedAt:string|null;
+	hasEvidence:boolean;
+	adminNote:string|null;
+};
+type Detail={transaction:FundingTransaction;history:Array<{action:string;createdAt:string;actor?:{name?:string|null;role:string}|null}>};
 
 const labels:Record<string,string>={PENDING:'Pending',PENDING_REVIEW:'Pending review',PROCESSING:'Processing',APPROVED:'Approved',COMPLETED:'Completed',REJECTED:'Rejected',CANCELLED:'Cancelled'};
 const formatDate=(value?:string|null)=>value?new Date(value).toLocaleString():'Not recorded';

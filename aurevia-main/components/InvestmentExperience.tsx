@@ -33,7 +33,14 @@ export default function InvestmentExperience(){
   finally{if(showLoading)setLoading(false);}
  },[translate]);
 
- useEffect(()=>{void load(true);},[load]);
+ useEffect(()=>{
+  void load(true);
+  const refreshWhenActive=()=>{if(document.visibilityState==='visible')void load();};
+  const timer=window.setInterval(refreshWhenActive,5_000);
+  window.addEventListener('focus',refreshWhenActive);
+  document.addEventListener('visibilitychange',refreshWhenActive);
+  return ()=>{window.clearInterval(timer);window.removeEventListener('focus',refreshWhenActive);document.removeEventListener('visibilitychange',refreshWhenActive);};
+ },[load]);
 
  async function submit(event:FormEvent<HTMLFormElement>,opportunity:Opportunity){
   event.preventDefault();if(busy)return;
@@ -44,6 +51,10 @@ export default function InvestmentExperience(){
    const response=await fetch('/api/investments',{method:'POST',headers:{'content-type':'application/json','Idempotency-Key':crypto.randomUUID()},body:JSON.stringify({opportunityId:opportunity.id,amount:value})});
    const result=await response.json();
    if(!response.ok)throw new Error(result.error||translate('unableToSubmitInvestment'));
+   if(data){
+    const submitted:Request={id:result.id,opportunityId:opportunity.id,accountMode:result.accountMode||data.accountMode,amount:result.amount||String(value),status:result.status,requestedAt:result.requestedAt||new Date().toISOString(),activatedAt:result.activatedAt||null,maturesAt:result.maturesAt||null,settlementReference:result.settlementReference||null,simulatedPayout:result.simulatedPayout||null,opportunity:{title:opportunity.title,category:opportunity.category,riskLevel:opportunity.riskLevel,targetReturnPercent:opportunity.targetReturnPercent,durationDays:opportunity.durationDays}};
+    setData(current=>current?{...current,requests:[submitted,...current.requests.filter(item=>item.id!==submitted.id)]}:current);
+   }
    setNotice(`${data?.accountMode||'Account'} simulated investment request recorded.`);
    setAmounts(current=>({...current,[opportunity.id]:''}));
    await load();

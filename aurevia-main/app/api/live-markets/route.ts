@@ -1,5 +1,5 @@
 import {NextResponse} from 'next/server';
-import {getMarketAsset,getMarketQuote,MARKET_ASSETS,MarketDataError} from '@/lib/live-market';
+import {getMarketAsset,getMarketQuote,MarketDataError} from '@/lib/live-market';
 import {getServerConfiguration} from '@/lib/config/env';
 
 export const dynamic='force-dynamic';

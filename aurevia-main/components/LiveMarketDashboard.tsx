@@ -4,11 +4,11 @@ import {useEffect,useMemo,useState} from 'react';
 import {QueryClient,QueryClientProvider,useQuery} from '@tanstack/react-query';
 import {useSession} from 'next-auth/react';
 import {io,type Socket} from 'socket.io-client';
-import {Activity,ArrowDown,ArrowLeftRight,ArrowUp,Check,ChevronDown,ChevronLeft,ChevronRight,GripVertical,ListPlus,Plus,RefreshCw,Search,Star,Trash2,X} from 'lucide-react';
+import {Activity,ArrowLeftRight,Check,ChevronDown,GripVertical,ListPlus,Plus,RefreshCw,Search,Star,Trash2,X} from 'lucide-react';
 import Nav from '@/components/Nav';
 import LivePriceChart from '@/components/LivePriceChart';
 import {COMPARISON_SYMBOLS,DEFAULT_WATCHLIST,MARKET_ASSETS,TIMEFRAMES,getMarketAsset,type MarketCandle,type MarketQuote,type TimeframeId} from '@/lib/live-market';
-import {getActiveWatchlist,setMarketWatchlistUserScope,useMarketWatchlists} from '@/lib/market-watchlists';
+import {setMarketWatchlistUserScope,useMarketWatchlists} from '@/lib/market-watchlists';
 
 type QuoteError={asset:NonNullable<ReturnType<typeof getMarketAsset>>;error:string};
 type QuotesResponse={quotes:Array<MarketQuote|QuoteError>;source:string};

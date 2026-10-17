@@ -130,7 +130,6 @@ export function getServerConfiguration(source: EnvironmentSource = process.env):
   const databaseUrl = cleanUrl(env('DATABASE_URL', source));
   const directUrl = cleanUrl(env('DIRECT_URL', source));
   const appUrl = cleanUrl(env('NEXT_PUBLIC_APP_URL', source) || env('NEXTAUTH_URL', source));
-  const publicSupabaseUrl = cleanUrl(env('NEXT_PUBLIC_SUPABASE_URL', source));
   const supabaseUrl = cleanUrl(env('SUPABASE_URL', source));
   const smtpPort = Number(env('SMTP_PORT', source) || 587);
   const smtpConfigured = Boolean(env('SMTP_HOST', source) && env('SMTP_USER', source) && env('SMTP_PASSWORD', source) && env('SMTP_FROM', source)) && Number.isInteger(smtpPort) && smtpPort > 0 && smtpPort <= 65535;

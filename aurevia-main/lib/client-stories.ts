@@ -1,4 +1,4 @@
-import {ClientStoryStatus,FundingStatus,FundingType,AccountMode} from '@prisma/client';
+import {ClientStoryStatus} from '@prisma/client';
 import {db} from '@/lib/db';
 import {isVerifiedClientWithdrawal,publicWithdrawalAmount} from '@/lib/client-stories-policy';
 import {resolveClientStoryImage} from '@/lib/client-story-media';
@@ -6,7 +6,7 @@ import {createPrivateSignedUrl} from '@/lib/private-storage';
 
 export async function getPublishedClientStories(){
 	const stories=await db.clientStory.findMany({
-		where:{publicationStatus:ClientStoryStatus.PUBLISHED,verifiedClient:true,transactionVerified:true,consentConfirmed:true,userId:{not:null}},
+		where:{publicationStatus:ClientStoryStatus.PUBLISHED,verifiedClient:true,transactionVerified:true,consentConfirmed:true,userId:{not:null},deletedAt:null},
 		include:{withdrawal:{select:{id:true,userId:true,type:true,accountMode:true,status:true,amount:true,currency:true,settlementReference:true,settledAt:true}}},
 		orderBy:{updatedAt:'desc'},
 		take:100,

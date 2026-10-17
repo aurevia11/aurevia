@@ -23,7 +23,7 @@ const viewports=[
 
 const publicRoutes=['/','/login','/register','/markets','/client-stories','/about','/education','/support','/waitlist','/terms','/privacy','/risk-disclosure'];
 const authenticatedRoutes=['/dashboard','/trade','/markets','/portfolio','/orders','/investments','/broadcasts','/wallet','/wallet/transactions','/kyc','/tier','/settings','/support','/notifications'];
-const adminRoutes=['/admin/login','/admin','/admin/users','/admin/broadcasts','/admin/investments','/admin/payments','/admin/approved-deposits','/admin/approved-withdrawals','/admin/settlements','/admin/kyc','/admin/support','/admin/waitlist','/admin/providers','/admin/operations','/admin/receipts','/admin/nova','/admin/audit-logs','/admin/tiers','/admin/verified-accounts'];
+const adminRoutes=['/admin/login','/admin','/admin/users','/admin/content','/admin/positions','/admin/settings','/admin/deleted-items','/admin/broadcasts','/admin/investments','/admin/payments','/admin/approved-deposits','/admin/approved-withdrawals','/admin/settlements','/admin/kyc','/admin/support','/admin/waitlist','/admin/providers','/admin/operations','/admin/receipts','/admin/nova','/admin/audit-logs','/admin/tiers','/admin/verified-accounts'];
 
 function fixture(name:string){
 	const value=process.env[`AUREVIA_E2E_${name}`];
@@ -1074,6 +1074,8 @@ test('simulated investment lifecycle and trading work in both account modes',asy
 		let userInvestments=await page.request.get('/api/investments').then(response=>response.json());
 		const demoRequest=userInvestments.requests.find((item:{opportunityId:string;accountMode:string})=>item.opportunityId===opportunity.id&&item.accountMode==='DEMO');
 		expect(demoRequest.status).toBe('PENDING_APPROVAL');
+		const demoRequestRow=page.locator('.investment-request-row').filter({hasText:'E2E simulated opportunity'});
+		await expect(demoRequestRow).toContainText('PENDING APPROVAL');
 		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(initialDemoBalance-1000);
 
 		const unrelatedContext=await browser.newContext();
@@ -1092,7 +1094,9 @@ test('simulated investment lifecycle and trading work in both account modes',asy
 			return result;
 		}
 		await review(demoRequest.id,'approve');
+		await expect(demoRequestRow).toContainText('APPROVED',{timeout:10_000});
 		await review(demoRequest.id,'activate');
+		await expect(demoRequestRow).toContainText('ACTIVE',{timeout:10_000});
 		await review(demoRequest.id,'complete');
 		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(initialDemoBalance-1000);
 		await review(demoRequest.id,'settle',{simulatedPayout:110000});
@@ -1364,17 +1368,17 @@ test('admin ledger adjustments update isolated DEMO and REAL accounts with audit
 	const realKey=randomUUID();
 	const realCredit=await page.request.post('/api/admin/balances',{data:{userId,accountMode:'REAL',currency:'USD',amount:'25.50',direction:'CREDIT',category:'ADMIN_ALLOCATION',reason:'Administrator-recorded allocation pending external settlement',idempotencyKey:realKey}});
 	expect(realCredit.status()).toBe(201);
-	await page.goto('/admin');
-	const manualFunding=page.locator('section.card').filter({has:page.getByRole('heading',{name:'Administrative account adjustment'})}).first();
-	await manualFunding.getByPlaceholder('Search name, email, or ID').fill(fixture('INVESTOR_EMAIL'));
-	await expect(manualFunding.locator('select').nth(0).locator(`option[value="${userId}"]`)).toHaveCount(1);
-	await manualFunding.locator('select').nth(0).selectOption(userId);
-	await manualFunding.locator('select').nth(1).selectOption('REAL');
-	await manualFunding.locator('input[type="number"]').fill('2500.00');
-	await manualFunding.locator('input[required]').fill('Approved administrator-recorded allocation pending settlement');
-	await manualFunding.getByRole('button',{name:'Review adjustment'}).click();
-	await manualFunding.getByRole('button',{name:'Confirm adjustment'}).click();
-	await expect(page.getByRole('status')).toContainText('Recorded credit of 2,500.00 USD in REAL');
+	await page.goto('/admin/users');
+	await page.locator('main').getByPlaceholder('Search accounts').fill(fixture('INVESTOR_EMAIL'));
+	const investorAccount=page.locator('article').filter({hasText:fixture('INVESTOR_EMAIL')}).first();
+	await expect(investorAccount).toBeVisible();
+	await investorAccount.getByText('Account controls, verification, and ledger').click();
+	const adjustmentForm=investorAccount.locator('form').first();
+	await adjustmentForm.getByLabel('Account').selectOption('REAL');
+	await adjustmentForm.getByLabel('Amount').fill('2500.00');
+	await adjustmentForm.getByLabel('Reason').fill('Approved administrator-recorded allocation pending settlement');
+	await adjustmentForm.getByRole('button',{name:'Record ledger adjustment'}).click();
+	await expect(page.getByRole('status')).toContainText('Recorded credit of 2500.00 USD in REAL');
 	await logout(page);
 	await loginAs(page,fixture('INVESTOR_EMAIL'),fixture('INVESTOR_PASSWORD'));
 	await selectAccountMode(page,'REAL');
@@ -1397,6 +1401,10 @@ test('a normal customer cannot access the administrator dashboard',async({page})
 
 test('administrator user and KYC actions persist and report protected actions',async({page})=>{
 	await loginAs(page,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
+	await page.goto('/admin');
+	await expect(page.getByRole('heading',{name:'Aurevia administration'})).toBeVisible();
+	const workspaceLinks=['User accounts','Client stories','Investment operations','Payments','Open positions','Market management','System settings','Pending verification','Orders and ledger','Support inbox','Audit log'];
+	for(const label of workspaceLinks)await expect(page.locator('main').getByRole('link',{name:new RegExp(label)})).toBeVisible();
 	const users=await page.request.get('/api/admin/users').then(response=>response.json());
 	const user=users.find((item:{email:string})=>item.email===fixture('USER_EMAIL'));
 	const investor=users.find((item:{email:string})=>item.email===fixture('INVESTOR_EMAIL'));
@@ -1409,9 +1417,9 @@ test('administrator user and KYC actions persist and report protected actions',a
 	expect((await selfDemotion.json()).error).toContain('cannot freeze or demote your own');
 	const frozen=await page.request.patch('/api/admin/users',{data:{userId:user.id,status:'FROZEN'}});
 	expect(frozen.ok()).toBeTruthy();
-	await page.goto('/admin');
-	const usersPanel=page.getByRole('heading',{name:'Users',exact:true}).locator('..');
-	const userRow=usersPanel.getByText(fixture('USER_EMAIL'),{exact:true}).first().locator('xpath=../..');
+	await page.goto('/admin/users');
+	await expect(page.getByRole('heading',{name:'User accounts'})).toBeVisible();
+	const userRow=page.locator('article').filter({hasText:fixture('USER_EMAIL')}).first();
 	await expect(userRow.getByRole('button',{name:'Unfreeze'})).toBeVisible();
 	await userRow.getByRole('button',{name:'Unfreeze'}).click();
 	await expect(userRow.getByRole('button',{name:'Freeze'})).toBeVisible();
@@ -1419,6 +1427,29 @@ test('administrator user and KYC actions persist and report protected actions',a
 	await expect(userRow.getByRole('button',{name:'Make user'})).toBeVisible();
 	await userRow.getByRole('button',{name:'Make user'}).click();
 	await expect(userRow.getByRole('button',{name:'Make admin'})).toBeVisible();
+	const controls=userRow.getByText('Account controls, verification, and ledger');
+	await controls.click();
+	await userRow.getByRole('button',{name:'Disable deposits'}).click();
+	await expect.poll(async()=>{const refreshed=await page.request.get('/api/admin/users').then(response=>response.json());return refreshed.find((item:{id:string})=>item.id===user.id)?.depositEnabled}).toBe(false);
+	await userRow.getByRole('button',{name:'Enable deposits'}).click();
+	await userRow.getByRole('button',{name:'Disable withdrawals'}).click();
+	await expect.poll(async()=>{const refreshed=await page.request.get('/api/admin/users').then(response=>response.json());return refreshed.find((item:{id:string})=>item.id===user.id)?.withdrawalEnabled}).toBe(false);
+	await userRow.getByRole('button',{name:'Enable withdrawals'}).click();
+	await userRow.getByLabel('Restriction reason').fill('E2E account review');
+	await userRow.getByRole('button',{name:'Restrict account'}).click();
+	await expect.poll(async()=>{const refreshed=await page.request.get('/api/admin/users').then(response=>response.json());return refreshed.find((item:{id:string})=>item.id===user.id)?.accountRestricted}).toBe(true);
+	await userRow.getByRole('button',{name:'Remove account restriction'}).click();
+	const adjustmentForm=userRow.locator('form');
+	await adjustmentForm.getByRole('combobox').nth(0).selectOption('DEMO');
+	await adjustmentForm.getByRole('combobox').nth(1).selectOption('CREDIT');
+	await adjustmentForm.getByRole('combobox').nth(2).selectOption('ADMIN_ALLOCATION');
+	await adjustmentForm.getByRole('combobox').nth(3).selectOption('USD');
+	await adjustmentForm.locator('input[type="number"]').fill('10');
+	await adjustmentForm.locator('input[minlength="3"]').fill('E2E simulated account allocation');
+	await adjustmentForm.getByRole('button',{name:'Record ledger adjustment'}).click();
+	await expect(page.getByRole('status')).toContainText('Recorded credit of 10.00 USD in DEMO');
+	expect(await db.ledgerTransaction.count({where:{description:{contains:'E2E simulated account allocation'}}})).toBe(1);
+	await page.goto('/admin/kyc');
 	const kycPanel=page.locator('#kyc-verification');
 	const kycReviewRows=kycPanel.locator('div.mt-3.divide-y').locator('article');
 	await expect(kycReviewRows.filter({hasText:fixture('INVESTOR_EMAIL')})).toHaveCount(0);
@@ -1775,7 +1806,7 @@ test('admin funding permissions gate DEMO simulated requests',async({browser,pag
 		expect(disabled.ok()).toBeTruthy();
 		expect(await disabled.json()).toMatchObject({depositEnabled:false,withdrawalEnabled:false});
 		const accessPanel=adminPage.getByRole('heading',{name:'User deposit and withdrawal access'});
-		await adminPage.goto('/admin');
+		await adminPage.goto('/admin/kyc');
 		await expect(accessPanel).toBeVisible();
 		await expect(adminPage.getByRole('button',{name:`Enable deposits for ${userProfile.email}`})).toBeVisible();
 		const blockedDeposit=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'DEPOSIT',amount:25,currency:'USD'}});
@@ -1992,6 +2023,65 @@ test('admin broadcast lifecycle is persisted and visible to active users without
 		const endedBroadcasts=await userPage.request.get('/api/broadcasts').then(response=>response.json());
 		expect(endedBroadcasts.broadcasts.find((item:{id:string})=>item.id===created.id).status).toBe('ENDED');
 	}finally{await userContext.close();}
+});
+
+test('Deleted Items enforces admin access and supports audited soft delete, bulk restore, and permanent removal',async({browser,page})=>{
+	await loginAs(page,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
+	const userContext=await browser.newContext();
+	const userPage=await userContext.newPage();
+	try{
+		await loginAs(userPage,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
+		expect((await userPage.request.get('/api/admin/deleted-items')).status()).toBe(403);
+		await userPage.goto('/admin/deleted-items');
+		await expect(userPage).toHaveURL(/\/login(?:\?|$)/);
+	}finally{await userContext.close();}
+	const adminId=await db.user.findUniqueOrThrow({where:{email:fixture('ADMIN_EMAIL')},select:{id:true}}).then(user=>user.id);
+	const suffix=randomUUID();
+	const waitlist=await db.waitlistEntry.create({data:{email:`deleted-${suffix}@example.invalid`,name:'Recycle Bin Waitlist',country:'GB',consent:true}});
+	const story=await db.clientStory.create({data:{displayName:'Recycle Bin Story',country:'GB',quote:'A private test story for deleted-item lifecycle coverage.'}});
+	const broadcast=await db.broadcast.create({data:{title:'Recycle Bin Broadcast',description:'A private test broadcast for deleted-item lifecycle coverage.',createdById:adminId}});
+	const removedWaitlist=await page.request.delete('/api/admin/waitlist',{data:{id:waitlist.id}});
+	const removedStory=await page.request.delete('/api/admin/client-stories',{data:{storyId:story.id}});
+	const removedBroadcast=await page.request.delete('/api/admin/broadcasts',{data:{id:broadcast.id}});
+	expect(removedWaitlist.status()).toBe(200);
+	expect(removedStory.status()).toBe(200);
+	expect(removedBroadcast.status()).toBe(200);
+	const deleted=await page.request.get('/api/admin/deleted-items').then(response=>response.json());
+	expect(deleted).toHaveLength(3);
+	expect(deleted.map((item:{type:string})=>item.type).sort()).toEqual(['BROADCAST','CLIENT_STORY','WAITLIST_ENTRY']);
+	expect(deleted.every((item:{deletedBy:{email:string}|null;originalLocation:string})=>item.deletedBy?.email===fixture('ADMIN_EMAIL')&&item.originalLocation.startsWith('/admin/'))).toBe(true);
+	await page.goto('/admin/deleted-items');
+	await expect(page.getByRole('heading',{name:'Deleted Items'})).toBeVisible();
+	await expect(page.getByText('Recycle Bin Broadcast')).toBeVisible();
+	await expect(page.getByText('Recycle Bin Story')).toBeVisible();
+	await page.getByLabel('Filter by item type').selectOption('WAITLIST_ENTRY');
+	await expect(page.getByText('Recycle Bin Waitlist')).toBeVisible();
+	await page.getByLabel('Filter by item type').selectOption('ALL');
+	await page.getByLabel('Search deleted items').fill('Recycle Bin Story');
+	await expect(page.getByText('Recycle Bin Story')).toBeVisible();
+	await expect(page.getByText('Recycle Bin Broadcast')).toHaveCount(0);
+	await page.getByLabel('Search deleted items').clear();
+	await expect(page.getByText('Recycle Bin Broadcast')).toBeVisible();
+	for(const name of ['Recycle Bin Waitlist','Recycle Bin Story','Recycle Bin Broadcast'])await page.getByRole('checkbox',{name:`Select ${name}`}).check();
+	await page.getByRole('button',{name:'Restore selected'}).click();
+	await expect(page.getByText('3 items restored.')).toBeVisible();
+	expect(await db.waitlistEntry.findUnique({where:{id:waitlist.id}}).then(item=>item?.deletedAt)).toBeNull();
+	expect(await db.clientStory.findUnique({where:{id:story.id}}).then(item=>item?.deletedAt)).toBeNull();
+	expect(await db.broadcast.findUnique({where:{id:broadcast.id}}).then(item=>item?.deletedAt)).toBeNull();
+	const restoredEvents=await db.auditLog.count({where:{entityId:{in:[waitlist.id,story.id,broadcast.id]},action:{in:['WAITLIST_ENTRY_RESTORED','CLIENT_STORY_RESTORED','BROADCAST_RESTORED']}}});
+	expect(restoredEvents).toBe(3);
+	await page.request.delete('/api/admin/waitlist',{data:{id:waitlist.id}});
+	await page.request.delete('/api/admin/client-stories',{data:{storyId:story.id}});
+	await page.request.delete('/api/admin/broadcasts',{data:{id:broadcast.id}});
+	const secondListing=await page.request.get('/api/admin/deleted-items').then(response=>response.json());
+	const permanentlyDeleted=await page.request.post('/api/admin/deleted-items',{data:{action:'permanently-delete',items:secondListing.map((item:{type:string;id:string})=>({type:item.type,id:item.id}))}});
+	expect(permanentlyDeleted.status()).toBe(200);
+	expect((await permanentlyDeleted.json()).affected).toBe(3);
+	expect(await db.waitlistEntry.findUnique({where:{id:waitlist.id}})).toBeNull();
+	expect(await db.clientStory.findUnique({where:{id:story.id}})).toBeNull();
+	expect(await db.broadcast.findUnique({where:{id:broadcast.id}})).toBeNull();
+	const lifecycleEvents=await db.auditLog.count({where:{entityId:{in:[waitlist.id,story.id,broadcast.id]}}});
+	expect(lifecycleEvents).toBe(12);
 });
 
 test('admin investment initiation is idempotent and reconciles against reserved ledger funds',async({browser,page})=>{

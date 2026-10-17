@@ -1,11 +1,11 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   binaryTargets = ["native", "debian-openssl-3.0.x"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
@@ -193,517 +193,567 @@ enum BroadcastStatus {
 }
 
 model User {
-  id String @id @default(cuid())
-  email String @unique
-  passwordHash String
-  name String?
-  phone String?
-  phoneVerified Boolean @default(false)
-  phoneVerifiedAt DateTime?
-  activeSessionId String? @unique
-  activeSessionUpdatedAt DateTime?
-  country String?
-  role Role @default(USER)
-  accountMode AccountMode @default(DEMO)
-  preferredDisplayCurrency String @default("USD")
-  approvedTier Int @default(1)
-  status UserStatus @default(ACTIVE)
-  twoFactorEnabled Boolean @default(false)
-  termsAcceptedAt DateTime?
-  kycStatus KycStatus @default(PENDING)
-  kycDocuments KycDocument[]
-  verifiedAt DateTime?
-  verifiedChannel VerificationChannel?
-  requiresRegistrationVerification Boolean @default(false)
-  depositEnabled Boolean @default(true)
-  withdrawalEnabled Boolean @default(true)
-  accountRestricted Boolean @default(false)
-  restrictionReason String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  orders Order[]
-  positions Position[]
-  funding FundingRequest[]
-  ledgerAccounts LedgerAccount[]
-  auditLogs AuditLog[]
-  kyc KycProfile?
-  supportConversations SupportConversation[]
-  supportMessages SupportMessage[]
-  notifications Notification[]
-  verificationCode VerificationCode?
-  passwordResetTokens PasswordResetToken[]
-  clientStories ClientStory[]
-  investments InvestmentRequest[]
-  portfolioSnapshots PortfolioSnapshot[]
-  createdInvestmentOpportunities InvestmentOpportunity[] @relation("InvestmentOpportunityCreator")
-  createdBroadcasts Broadcast[] @relation("BroadcastCreator")
-  waitlistEntry WaitlistEntry?
-  tierRequests TierUpgradeRequest[] @relation("TierRequestUser")
-  tierReviews TierUpgradeRequest[] @relation("TierRequestReviewer")
-  avatarKey String?
+  id                               String                  @id @default(cuid())
+  email                            String                  @unique
+  passwordHash                     String
+  name                             String?
+  phone                            String?
+  phoneVerified                    Boolean                 @default(false)
+  phoneVerifiedAt                  DateTime?
+  activeSessionId                  String?                 @unique
+  activeSessionUpdatedAt           DateTime?
+  country                          String?
+  role                             Role                    @default(USER)
+  accountMode                      AccountMode             @default(DEMO)
+  preferredDisplayCurrency         String                  @default("USD")
+  approvedTier                     Int                     @default(1)
+  status                           UserStatus              @default(ACTIVE)
+  twoFactorEnabled                 Boolean                 @default(false)
+  termsAcceptedAt                  DateTime?
+  kycStatus                        KycStatus               @default(PENDING)
+  kycDocuments                     KycDocument[]
+  verifiedAt                       DateTime?
+  verifiedChannel                  VerificationChannel?
+  requiresRegistrationVerification Boolean                 @default(false)
+  depositEnabled                   Boolean                 @default(true)
+  withdrawalEnabled                Boolean                 @default(true)
+  accountRestricted                Boolean                 @default(false)
+  restrictionReason                String?
+  createdAt                        DateTime                @default(now())
+  updatedAt                        DateTime                @updatedAt
+  orders                           Order[]
+  positions                        Position[]
+  funding                          FundingRequest[]
+  ledgerAccounts                   LedgerAccount[]
+  auditLogs                        AuditLog[]
+  kyc                              KycProfile?
+  supportConversations             SupportConversation[]
+  supportMessages                  SupportMessage[]
+  notifications                    Notification[]
+  verificationCode                 VerificationCode?
+  passwordResetTokens              PasswordResetToken[]
+  clientStories                    ClientStory[]
+  investments                      InvestmentRequest[]
+  portfolioSnapshots               PortfolioSnapshot[]
+  createdInvestmentOpportunities   InvestmentOpportunity[] @relation("InvestmentOpportunityCreator")
+  createdBroadcasts                Broadcast[]             @relation("BroadcastCreator")
+  deletedWaitlistEntries           WaitlistEntry[]         @relation("WaitlistEntryDeletedBy")
+  deletedClientStories             ClientStory[]           @relation("ClientStoryDeletedBy")
+  deletedBroadcasts                Broadcast[]             @relation("BroadcastDeletedBy")
+  waitlistEntry                    WaitlistEntry?
+  tierRequests                     TierUpgradeRequest[]    @relation("TierRequestUser")
+  tierReviews                      TierUpgradeRequest[]    @relation("TierRequestReviewer")
+  avatarKey                        String?
 }
 
 model WaitlistEntry {
-  id String @id @default(cuid())
-  email String @unique
-  name String
-  country String
-  investorType String @default("INDIVIDUAL")
-  phone String?
-  consent Boolean
-  status WaitlistEntryStatus @default(WAITING)
-  source String?
-  notes String?
-  userId String? @unique
-  user User? @relation(fields:[userId],references:[id],onDelete:SetNull)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String              @id @default(cuid())
+  email        String              @unique
+  name         String
+  country      String
+  investorType String              @default("INDIVIDUAL")
+  phone        String?
+  consent      Boolean
+  status       WaitlistEntryStatus @default(WAITING)
+  source       String?
+  notes        String?
+  userId       String?             @unique
+  user         User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  deletedAt    DateTime?
+  deletedById  String?
+  deletedBy    User?               @relation("WaitlistEntryDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
 
-  @@index([status,country,createdAt])
+  @@index([status, country, createdAt])
+  @@index([deletedAt, createdAt])
   @@index([createdAt])
 }
 
 model Notification {
-  id String @id @default(cuid())
-  userId String
-  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
-  type NotificationType
-  title String
-  message String
-  isRead Boolean @default(false)
+  id            String           @id @default(cuid())
+  userId        String
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type          NotificationType
+  title         String
+  message       String
+  isRead        Boolean          @default(false)
   relatedEntity String?
-  relatedId String?
-  actionUrl String?
-  dedupeKey String @unique
-  createdAt DateTime @default(now())
-  @@index([userId,isRead,createdAt])
-  @@index([userId,createdAt])
+  relatedId     String?
+  actionUrl     String?
+  dedupeKey     String           @unique
+  createdAt     DateTime         @default(now())
+
+  @@index([userId, isRead, createdAt])
+  @@index([userId, createdAt])
 }
 
 model VerificationCode {
-  id String @id @default(cuid())
-  userId String @unique
-  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
-  codeHash String
-  channel VerificationChannel
-  expiresAt DateTime
+  id          String              @id @default(cuid())
+  userId      String              @unique
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  codeHash    String
+  channel     VerificationChannel
+  expiresAt   DateTime
   resendAfter DateTime
-  attempts Int @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  attempts    Int                 @default(0)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
   @@index([expiresAt])
 }
 
 model PasswordResetToken {
-  id String @id @default(cuid())
-  userId String
-  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
-  tokenHash String @unique
-  expiresAt DateTime
+  id         String    @id @default(cuid())
+  userId     String
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  expiresAt  DateTime
   consumedAt DateTime?
-  createdAt DateTime @default(now())
-  @@index([userId,createdAt])
+  createdAt  DateTime  @default(now())
+
+  @@index([userId, createdAt])
   @@index([expiresAt])
 }
+
 model KycProfile {
-  id String @id @default(cuid())
-  userId String @unique
-  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
-  legalName String?
-  dob DateTime?
-  address String?
-  idType String?
-  idNumber String?
+  id          String    @id @default(cuid())
+  userId      String    @unique
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  legalName   String?
+  dob         DateTime?
+  address     String?
+  idType      String?
+  idNumber    String?
   submittedAt DateTime?
-  reviewedAt DateTime?
-  reviewNote String?
+  reviewedAt  DateTime?
+  reviewNote  String?
 }
 
 model KycDocument {
-  id String @id @default(cuid())
-  userId String
-  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
-  kind String
-  filename String
-  storageKey String @unique
-  mimeType String
-  size Int
-  status DocumentStatus @default(SUBMITTED)
-  uploadedAt DateTime @default(now())
+  id         String         @id @default(cuid())
+  userId     String
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind       String
+  filename   String
+  storageKey String         @unique
+  mimeType   String
+  size       Int
+  status     DocumentStatus @default(SUBMITTED)
+  uploadedAt DateTime       @default(now())
   reviewedAt DateTime?
   reviewNote String?
-  @@index([userId,status,uploadedAt])
+
+  @@index([userId, status, uploadedAt])
 }
 
 model Instrument {
-  id String @id @default(cuid())
-  symbol String @unique
-  name String
-  baseAsset String
+  id         String     @id @default(cuid())
+  symbol     String     @unique
+  name       String
+  baseAsset  String
   quoteAsset String
-  price Decimal @db.Decimal(30,10)
-  tickSize Decimal @default(0.01) @db.Decimal(30,10)
-  leverage Decimal @default(1) @db.Decimal(10,2)
-  makerFee Decimal @default(0.001) @db.Decimal(10,6)
-  takerFee Decimal @default(0.0015) @db.Decimal(10,6)
-  enabled Boolean @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  orders Order[]
-  positions Position[]
-  candles Candle[]
+  price      Decimal    @db.Decimal(30, 10)
+  tickSize   Decimal    @default(0.01) @db.Decimal(30, 10)
+  leverage   Decimal    @default(1) @db.Decimal(10, 2)
+  makerFee   Decimal    @default(0.001) @db.Decimal(10, 6)
+  takerFee   Decimal    @default(0.0015) @db.Decimal(10, 6)
+  enabled    Boolean    @default(true)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  orders     Order[]
+  positions  Position[]
+  candles    Candle[]
 }
+
 model Candle {
-  id String @id @default(cuid())
+  id           String     @id @default(cuid())
   instrumentId String
-  instrument Instrument @relation(fields:[instrumentId],references:[id],onDelete:Cascade)
-  ts DateTime
-  open Decimal @db.Decimal(30,10)
-  high Decimal @db.Decimal(30,10)
-  low Decimal @db.Decimal(30,10)
-  close Decimal @db.Decimal(30,10)
-  volume Decimal @db.Decimal(30,10)
-  @@unique([instrumentId,ts])
-  @@index([instrumentId,ts])
+  instrument   Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+  ts           DateTime
+  open         Decimal    @db.Decimal(30, 10)
+  high         Decimal    @db.Decimal(30, 10)
+  low          Decimal    @db.Decimal(30, 10)
+  close        Decimal    @db.Decimal(30, 10)
+  volume       Decimal    @db.Decimal(30, 10)
+
+  @@unique([instrumentId, ts])
+  @@index([instrumentId, ts])
 }
+
 model Order {
-  id String @id @default(cuid())
-  userId String
-  instrumentId String
-  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
-  instrument Instrument @relation(fields:[instrumentId],references:[id])
-  side OrderSide
-  type OrderType
-  status OrderStatus @default(OPEN)
-  accountMode AccountMode @default(DEMO)
-  quantity Decimal @db.Decimal(30,10)
-  filledQuantity Decimal @default(0) @db.Decimal(30,10)
-  price Decimal? @db.Decimal(30,10)
-  stopPrice Decimal? @db.Decimal(30,10)
-  averageFillPrice Decimal? @db.Decimal(30,10)
-  fee Decimal @default(0) @db.Decimal(30,10)
-  idempotencyKey String? @unique
-  providerName String?
-  providerOrderId String? @unique
-  providerStatus String?
-  providerAcceptedAt DateTime?
-  providerUpdatedAt DateTime?
+  id                   String      @id @default(cuid())
+  userId               String
+  instrumentId         String
+  user                 User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  instrument           Instrument  @relation(fields: [instrumentId], references: [id])
+  side                 OrderSide
+  type                 OrderType
+  status               OrderStatus @default(OPEN)
+  accountMode          AccountMode @default(DEMO)
+  quantity             Decimal     @db.Decimal(30, 10)
+  filledQuantity       Decimal     @default(0) @db.Decimal(30, 10)
+  price                Decimal?    @db.Decimal(30, 10)
+  stopPrice            Decimal?    @db.Decimal(30, 10)
+  averageFillPrice     Decimal?    @db.Decimal(30, 10)
+  fee                  Decimal     @default(0) @db.Decimal(30, 10)
+  idempotencyKey       String?     @unique
+  providerName         String?
+  providerOrderId      String?     @unique
+  providerStatus       String?
+  providerAcceptedAt   DateTime?
+  providerUpdatedAt    DateTime?
   reconciliationStatus String?
-  reconciledAt DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  executions Execution[]
-  @@index([userId,status])
-  @@index([userId,instrumentId,accountMode,side,status])
-  @@index([accountMode,providerName,providerStatus])
+  reconciledAt         DateTime?
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+  executions           Execution[]
+
+  @@index([userId, status])
+  @@index([userId, instrumentId, accountMode, side, status])
+  @@index([accountMode, providerName, providerStatus])
 }
+
 model Execution {
-  id String @id @default(cuid())
-  orderId String
-  order Order @relation(fields:[orderId],references:[id],onDelete:Cascade)
-  quantity Decimal @db.Decimal(30,10)
-  price Decimal @db.Decimal(30,10)
-  fee Decimal @db.Decimal(30,10)
-  providerExecutionId String? @unique
-  createdAt DateTime @default(now())
+  id                  String   @id @default(cuid())
+  orderId             String
+  order               Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  quantity            Decimal  @db.Decimal(30, 10)
+  price               Decimal  @db.Decimal(30, 10)
+  fee                 Decimal  @db.Decimal(30, 10)
+  providerExecutionId String?  @unique
+  createdAt           DateTime @default(now())
 }
+
 model Position {
-  id String @id @default(cuid())
-  userId String
+  id           String         @id @default(cuid())
+  userId       String
   instrumentId String
-  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
-  instrument Instrument @relation(fields:[instrumentId],references:[id])
-  side OrderSide
-  quantity Decimal @db.Decimal(30,10)
-  entryPrice Decimal @db.Decimal(30,10)
-  leverage Decimal @default(1) @db.Decimal(10,2)
-  realizedPnl Decimal @default(0) @db.Decimal(30,10)
-  margin Decimal @default(0) @db.Decimal(30,10)
-  status PositionStatus @default(OPEN)
-  accountMode AccountMode @default(DEMO)
-  openedAt DateTime @default(now())
-  closedAt DateTime?
-  @@index([userId,status])
-  @@index([userId,instrumentId,accountMode,side,status])
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  instrument   Instrument     @relation(fields: [instrumentId], references: [id])
+  side         OrderSide
+  quantity     Decimal        @db.Decimal(30, 10)
+  entryPrice   Decimal        @db.Decimal(30, 10)
+  leverage     Decimal        @default(1) @db.Decimal(10, 2)
+  realizedPnl  Decimal        @default(0) @db.Decimal(30, 10)
+  margin       Decimal        @default(0) @db.Decimal(30, 10)
+  status       PositionStatus @default(OPEN)
+  accountMode  AccountMode    @default(DEMO)
+  openedAt     DateTime       @default(now())
+  closedAt     DateTime?
+
+  @@index([userId, status])
+  @@index([userId, instrumentId, accountMode, side, status])
 }
+
 model LedgerAccount {
-  id String @id @default(cuid())
-  userId String?
-  user User? @relation(fields:[userId],references:[id],onDelete:Cascade)
-  accountMode AccountMode @default(DEMO)
-  code String @unique
-  name String
-  currency String @default("USD")
-  startingBalance Decimal @default(0) @db.Decimal(30,10)
-  entries LedgerEntry[]
-  createdAt DateTime @default(now())
+  id              String        @id @default(cuid())
+  userId          String?
+  user            User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountMode     AccountMode   @default(DEMO)
+  code            String        @unique
+  name            String
+  currency        String        @default("USD")
+  startingBalance Decimal       @default(0) @db.Decimal(30, 10)
+  entries         LedgerEntry[]
+  createdAt       DateTime      @default(now())
 }
+
 model ExchangeRate {
-  id String @id @default(cuid())
-  baseCurrency String
+  id            String   @id @default(cuid())
+  baseCurrency  String
   quoteCurrency String
-  rate Decimal @db.Decimal(30,12)
-  source String
-  observedAt DateTime
-  updatedAt DateTime @updatedAt
-  @@unique([baseCurrency,quoteCurrency])
+  rate          Decimal  @db.Decimal(30, 12)
+  source        String
+  observedAt    DateTime
+  updatedAt     DateTime @updatedAt
+
+  @@unique([baseCurrency, quoteCurrency])
   @@index([observedAt])
 }
+
 model LedgerTransaction {
-  id String @id @default(cuid())
-  reference String @unique
+  id          String        @id @default(cuid())
+  reference   String        @unique
   description String
-  createdAt DateTime @default(now())
-  entries LedgerEntry[]
+  createdAt   DateTime      @default(now())
+  entries     LedgerEntry[]
 }
+
 model LedgerEntry {
-  id String @id @default(cuid())
+  id            String            @id @default(cuid())
   transactionId String
-  accountId String
-  type EntryType
-  amount Decimal @db.Decimal(30,10)
-  transaction LedgerTransaction @relation(fields:[transactionId],references:[id],onDelete:Cascade)
-  account LedgerAccount @relation(fields:[accountId],references:[id])
-  createdAt DateTime @default(now())
-  @@index([accountId,createdAt])
+  accountId     String
+  type          EntryType
+  amount        Decimal           @db.Decimal(30, 10)
+  transaction   LedgerTransaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  account       LedgerAccount     @relation(fields: [accountId], references: [id])
+  createdAt     DateTime          @default(now())
+
+  @@index([accountId, createdAt])
 }
+
 model FundingRequest {
-  id String @id @default(cuid())
-  userId String
-  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
-  type FundingType
-  method String
-  amount Decimal @db.Decimal(30,10)
-  creditedAmount Decimal? @db.Decimal(30,10)
-  currency String @default("USD")
-  status FundingStatus @default(PENDING)
-  accountMode AccountMode @default(DEMO)
-  paymentMethodId String?
-  paymentMethod PaymentMethod? @relation(fields:[paymentMethodId],references:[id],onDelete:SetNull)
-  idempotencyKey String? @unique
+  id                   String                @id @default(cuid())
+  userId               String
+  user                 User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type                 FundingType
+  method               String
+  amount               Decimal               @db.Decimal(30, 10)
+  creditedAmount       Decimal?              @db.Decimal(30, 10)
+  currency             String                @default("USD")
+  status               FundingStatus         @default(PENDING)
+  accountMode          AccountMode           @default(DEMO)
+  paymentMethodId      String?
+  paymentMethod        PaymentMethod?        @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+  idempotencyKey       String?               @unique
   transactionReference String?
-  referenceInfo String?
-  destinationInfo String?
-  senderInfo String?
-  beneficiaryInfo String?
-  network String?
-  note String?
-  adminNote String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  reviewedAt DateTime?
-  verifiedAt DateTime?
-  settlementReference String?
-  settledAt DateTime?
-  receiptKey String?
+  referenceInfo        String?
+  destinationInfo      String?
+  senderInfo           String?
+  beneficiaryInfo      String?
+  network              String?
+  note                 String?
+  adminNote            String?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  reviewedAt           DateTime?
+  verifiedAt           DateTime?
+  settlementReference  String?
+  settledAt            DateTime?
+  receiptKey           String?
   supportConversations SupportConversation[]
-  clientStory ClientStory?
-  @@index([status,createdAt])
-  @@index([userId,accountMode,createdAt])
-  @@index([type,accountMode,status,createdAt])
-  @@index([userId,accountMode,currency,type,status])
+  clientStory          ClientStory?
+
+  @@index([status, createdAt])
+  @@index([userId, accountMode, createdAt])
+  @@index([type, accountMode, status, createdAt])
+  @@index([userId, accountMode, currency, type, status])
 }
+
 model PaymentMethod {
-  id String @id @default(cuid())
-  name String
-  enabled Boolean @default(true)
-  demoOnly Boolean @default(false)
-  depositEnabled Boolean @default(true)
-  withdrawalEnabled Boolean @default(true)
-  requiresNetwork Boolean @default(false)
-  currencies String[] @default(["USD"])
-  destination String?
-  instructions String?
-  minimumAmount Decimal @default(0) @db.Decimal(30,10)
-  maximumAmount Decimal? @db.Decimal(30,10)
-  processingNotes String?
-  displayOrder Int @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  fundingRequests FundingRequest[]
-  @@index([enabled,displayOrder])
+  id                String           @id @default(cuid())
+  name              String
+  enabled           Boolean          @default(true)
+  demoOnly          Boolean          @default(false)
+  depositEnabled    Boolean          @default(true)
+  withdrawalEnabled Boolean          @default(true)
+  requiresNetwork   Boolean          @default(false)
+  currencies        String[]         @default(["USD"])
+  destination       String?
+  instructions      String?
+  minimumAmount     Decimal          @default(0) @db.Decimal(30, 10)
+  maximumAmount     Decimal?         @db.Decimal(30, 10)
+  processingNotes   String?
+  displayOrder      Int              @default(0)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  fundingRequests   FundingRequest[]
+
+  @@index([enabled, displayOrder])
 }
+
 model SupportConversation {
-  id String @id @default(cuid())
-  userId String
-  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
-  accountMode AccountMode @default(DEMO)
-  subject String
-  category SupportCategory @default(GENERAL)
-  isComplaint Boolean @default(false)
+  id            String           @id @default(cuid())
+  userId        String
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountMode   AccountMode      @default(DEMO)
+  subject       String
+  category      SupportCategory  @default(GENERAL)
+  isComplaint   Boolean          @default(false)
   attachmentKey String?
-  status SupportStatus @default(OPEN)
-  priority SupportPriority @default(NORMAL)
+  status        SupportStatus    @default(OPEN)
+  priority      SupportPriority  @default(NORMAL)
   transactionId String?
-  transaction FundingRequest? @relation(fields:[transactionId],references:[id],onDelete:SetNull)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  lastMessageAt DateTime @default(now())
-  messages SupportMessage[]
-  @@index([userId,createdAt])
-  @@index([status,lastMessageAt])
-  @@index([priority,status,lastMessageAt])
+  transaction   FundingRequest?  @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  lastMessageAt DateTime         @default(now())
+  messages      SupportMessage[]
+
+  @@index([userId, createdAt])
+  @@index([status, lastMessageAt])
+  @@index([priority, status, lastMessageAt])
 }
 
 model TierUpgradeRequest {
-  id String @id @default(cuid())
-  userId String
-  user User @relation("TierRequestUser",fields:[userId],references:[id],onDelete:Cascade)
-  currentTier Int
+  id            String            @id @default(cuid())
+  userId        String
+  user          User              @relation("TierRequestUser", fields: [userId], references: [id], onDelete: Cascade)
+  currentTier   Int
   requestedTier Int
-  status TierUpgradeStatus @default(PENDING_REVIEW)
-  userMessage String? @db.VarChar(1000)
-  adminReason String? @db.VarChar(1000)
-  reviewedById String?
-  reviewedBy User? @relation("TierRequestReviewer",fields:[reviewedById],references:[id],onDelete:SetNull)
-  reviewedAt DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  @@index([userId,status,createdAt])
-  @@index([status,createdAt])
+  status        TierUpgradeStatus @default(PENDING_REVIEW)
+  userMessage   String?           @db.VarChar(1000)
+  adminReason   String?           @db.VarChar(1000)
+  reviewedById  String?
+  reviewedBy    User?             @relation("TierRequestReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt    DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  @@index([userId, status, createdAt])
+  @@index([status, createdAt])
 }
+
 model SupportMessage {
-  id String @id @default(cuid())
+  id             String              @id @default(cuid())
   conversationId String
-  conversation SupportConversation @relation(fields:[conversationId],references:[id],onDelete:Cascade)
-  authorType SupportAuthor
-  authorId String?
-  author User? @relation(fields:[authorId],references:[id],onDelete:SetNull)
-  body String
-  createdAt DateTime @default(now())
-  @@index([conversationId,createdAt])
+  conversation   SupportConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  authorType     SupportAuthor
+  authorId       String?
+  author         User?               @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  body           String
+  createdAt      DateTime            @default(now())
+
+  @@index([conversationId, createdAt])
 }
+
 model SystemSetting {
-  key String @id
-  value String
+  key       String   @id
+  value     String
   updatedAt DateTime @updatedAt
 }
 
 model Broadcast {
-  id String @id @default(cuid())
-  title String @db.VarChar(120)
-  description String @db.VarChar(3000)
-  streamUrl String? @db.VarChar(2048)
-  startsAt DateTime?
-  status BroadcastStatus @default(DRAFT)
+  id          String          @id @default(cuid())
+  title       String          @db.VarChar(120)
+  description String          @db.VarChar(3000)
+  streamUrl   String?         @db.VarChar(2048)
+  startsAt    DateTime?
+  status      BroadcastStatus @default(DRAFT)
   publishedAt DateTime?
-  endedAt DateTime?
-  archivedAt DateTime?
+  endedAt     DateTime?
+  archivedAt  DateTime?
   createdById String
-  createdBy User @relation("BroadcastCreator",fields:[createdById],references:[id],onDelete:Restrict)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  @@index([status,startsAt])
+  createdBy   User            @relation("BroadcastCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  deletedAt   DateTime?
+  deletedById String?
+  deletedBy   User?           @relation("BroadcastDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
+
+  @@index([status, startsAt])
   @@index([createdAt])
+  @@index([deletedAt, createdAt])
 }
+
 model AuditLog {
-  id String @id @default(cuid())
-  actorId String?
-  actor User? @relation(fields:[actorId],references:[id],onDelete:SetNull)
-  action String
-  entity String
-  entityId String?
-  metadata Json?
+  id        String   @id @default(cuid())
+  actorId   String?
+  actor     User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action    String
+  entity    String
+  entityId  String?
+  metadata  Json?
   createdAt DateTime @default(now())
+
   @@index([createdAt])
 }
 
 model InvestmentOpportunity {
-  id String @id @default(cuid())
-  title String
-  category String
-  description String
-  assetSymbol String?
-  minimumAmount Decimal @db.Decimal(30,10)
-  maximumAmount Decimal? @db.Decimal(30,10)
-  targetReturnPercent Decimal? @db.Decimal(10,6)
-  durationDays Int
-  startsAt DateTime?
-  maturesAt DateTime?
-  riskLevel InvestmentRisk
-  status InvestmentOpportunityStatus @default(DRAFT)
-  demoEligible Boolean @default(true)
-  realEligible Boolean @default(false)
-  requiresApproval Boolean @default(true)
-  targetPrice Decimal? @db.Decimal(30,10)
-  stopPrice Decimal? @db.Decimal(30,10)
-  createdById String
-  createdBy User @relation("InvestmentOpportunityCreator", fields:[createdById], references:[id], onDelete:Restrict)
-  requests InvestmentRequest[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  @@index([status,createdAt])
-  @@index([assetSymbol,status])
+  id                  String                      @id @default(cuid())
+  title               String
+  category            String
+  description         String
+  assetSymbol         String?
+  minimumAmount       Decimal                     @db.Decimal(30, 10)
+  maximumAmount       Decimal?                    @db.Decimal(30, 10)
+  targetReturnPercent Decimal?                    @db.Decimal(10, 6)
+  durationDays        Int
+  startsAt            DateTime?
+  maturesAt           DateTime?
+  riskLevel           InvestmentRisk
+  status              InvestmentOpportunityStatus @default(DRAFT)
+  demoEligible        Boolean                     @default(true)
+  realEligible        Boolean                     @default(false)
+  requiresApproval    Boolean                     @default(true)
+  targetPrice         Decimal?                    @db.Decimal(30, 10)
+  stopPrice           Decimal?                    @db.Decimal(30, 10)
+  createdById         String
+  createdBy           User                        @relation("InvestmentOpportunityCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  requests            InvestmentRequest[]
+  createdAt           DateTime                    @default(now())
+  updatedAt           DateTime                    @updatedAt
+
+  @@index([status, createdAt])
+  @@index([assetSymbol, status])
 }
 
 model InvestmentRequest {
-  id String @id @default(cuid())
-  userId String
-  user User @relation(fields:[userId], references:[id], onDelete:Cascade)
-  opportunityId String
-  opportunity InvestmentOpportunity @relation(fields:[opportunityId], references:[id], onDelete:Restrict)
-  accountMode AccountMode
-  amount Decimal @db.Decimal(30,10)
-  status InvestmentStatus @default(PENDING_APPROVAL)
-  idempotencyKey String @unique
-  targetReturnPercent Decimal? @db.Decimal(10,6)
-  durationDays Int
-  requestedAt DateTime @default(now())
-  approvedAt DateTime?
-  activatedAt DateTime?
-  maturesAt DateTime?
-  completedAt DateTime?
-  settledAt DateTime?
+  id                         String                @id @default(cuid())
+  userId                     String
+  user                       User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  opportunityId              String
+  opportunity                InvestmentOpportunity @relation(fields: [opportunityId], references: [id], onDelete: Restrict)
+  accountMode                AccountMode
+  amount                     Decimal               @db.Decimal(30, 10)
+  status                     InvestmentStatus      @default(PENDING_APPROVAL)
+  idempotencyKey             String                @unique
+  targetReturnPercent        Decimal?              @db.Decimal(10, 6)
+  durationDays               Int
+  requestedAt                DateTime              @default(now())
+  approvedAt                 DateTime?
+  activatedAt                DateTime?
+  maturesAt                  DateTime?
+  completedAt                DateTime?
+  settledAt                  DateTime?
   externalExecutionReference String?
-  settlementReference String?
-  simulatedPayout Decimal? @db.Decimal(30,10)
-  adminNote String?
-  updatedAt DateTime @updatedAt
-  @@index([userId,accountMode,status,requestedAt])
-  @@index([opportunityId,status,requestedAt])
-  @@index([accountMode,status,maturesAt])
+  settlementReference        String?
+  simulatedPayout            Decimal?              @db.Decimal(30, 10)
+  adminNote                  String?
+  updatedAt                  DateTime              @updatedAt
+
+  @@index([userId, accountMode, status, requestedAt])
+  @@index([opportunityId, status, requestedAt])
+  @@index([accountMode, status, maturesAt])
 }
 
 model PortfolioSnapshot {
-  id String @id @default(cuid())
-  userId String
-  user User @relation(fields:[userId],references:[id],onDelete:Cascade)
-  accountMode AccountMode
-  snapshotBucket DateTime
-  cashBalance Decimal @db.Decimal(30,10)
-  positionValue Decimal @db.Decimal(30,10)
-  investmentValue Decimal @db.Decimal(30,10)
-  totalValue Decimal @db.Decimal(30,10)
-  realizedPnl Decimal @db.Decimal(30,10)
-  unrealizedPnl Decimal @db.Decimal(30,10)
-  createdAt DateTime @default(now())
-  @@unique([userId,accountMode,snapshotBucket])
-  @@index([accountMode,snapshotBucket])
+  id              String      @id @default(cuid())
+  userId          String
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accountMode     AccountMode
+  snapshotBucket  DateTime
+  cashBalance     Decimal     @db.Decimal(30, 10)
+  positionValue   Decimal     @db.Decimal(30, 10)
+  investmentValue Decimal     @db.Decimal(30, 10)
+  totalValue      Decimal     @db.Decimal(30, 10)
+  realizedPnl     Decimal     @db.Decimal(30, 10)
+  unrealizedPnl   Decimal     @db.Decimal(30, 10)
+  createdAt       DateTime    @default(now())
+
+  @@unique([userId, accountMode, snapshotBucket])
+  @@index([accountMode, snapshotBucket])
 }
 
 model ClientStory {
-  id String @id @default(cuid())
-  displayName String
-  country String
-  cityOrRegion String?
-  quote String
-  imageReference String?
-  userId String?
-  user User? @relation(fields:[userId],references:[id],onDelete:SetNull)
-  verifiedWithdrawalId String? @unique
-  withdrawal FundingRequest? @relation(fields:[verifiedWithdrawalId],references:[id],onDelete:SetNull)
-  withdrawalAmount Decimal? @db.Decimal(30,10)
-  currency String?
-  verifiedClient Boolean @default(false)
-  transactionVerified Boolean @default(false)
-  consentConfirmed Boolean @default(false)
-  showWithdrawalAmount Boolean @default(false)
-  displayCurrency String?
-  publicationStatus ClientStoryStatus @default(DRAFT)
-  source String?
-  adminNote String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  @@index([publicationStatus,createdAt])
+  id                   String            @id @default(cuid())
+  displayName          String
+  country              String
+  cityOrRegion         String?
+  quote                String
+  imageReference       String?
+  userId               String?
+  user                 User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  verifiedWithdrawalId String?           @unique
+  withdrawal           FundingRequest?   @relation(fields: [verifiedWithdrawalId], references: [id], onDelete: SetNull)
+  withdrawalAmount     Decimal?          @db.Decimal(30, 10)
+  currency             String?
+  verifiedClient       Boolean           @default(false)
+  transactionVerified  Boolean           @default(false)
+  consentConfirmed     Boolean           @default(false)
+  showWithdrawalAmount Boolean           @default(false)
+  displayCurrency      String?
+  publicationStatus    ClientStoryStatus @default(DRAFT)
+  source               String?
+  adminNote            String?
+  deletedAt            DateTime?
+  deletedById          String?
+  deletedBy            User?             @relation("ClientStoryDeletedBy", fields: [deletedById], references: [id], onDelete: SetNull)
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  @@index([publicationStatus, createdAt])
   @@index([userId])
+  @@index([deletedAt, createdAt])
 }
