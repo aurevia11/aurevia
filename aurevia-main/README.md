@@ -227,11 +227,11 @@ Submit the profile and identity documents for private administrator review. Tier
 
 From `/wallet`, submit a simulated deposit or withdrawal request for the selected account mode and supported currency. A deposit remains pending until an authorized administrator reviews it; optional uploaded evidence is attached only to the simulated request and is not proof that payment was received. Approval posts an auditable internal ledger credit and makes a persisted transaction receipt available. Withdrawal requests reserve available simulated funds; administrator approval completes the internal ledger debit. Rejection or cancellation releases the reservation. No payment method, bank, card, cryptocurrency network, or payout provider is used.
 
-DEMO keeps its $5,000 virtual starting balance. DEMO and REAL-interface balances, orders, positions, transactions, and P&L remain isolated. Administrators may issue audited simulated credits to either account mode. The `/admin/markets` page can generate bounded, audited price changes for supported simulation instruments; it does not publish live quotes. Users can select a persistent display currency across wallet, dashboard, portfolio, activity, and USD transaction history; conversions are informational only and never change underlying ledger balances.
+DEMO and REAL-mode simulation accounts each start with a one-time $5,000 virtual USD balance. The REAL-mode allocation is simulated platform capital, not real money or a deposit; it is recorded in the REAL ledger and is never transferred from DEMO. DEMO and REAL-interface balances, orders, positions, transactions, and P&L remain isolated. Administrators may issue audited simulated credits to either account mode. The `/admin/markets` page can generate bounded, audited price changes for supported simulation instruments; it does not publish live quotes. Users can select a persistent display currency across wallet, dashboard, portfolio, activity, and USD transaction history; conversions are informational only and never change underlying ledger balances.
 
 ### 6. Trading
 
-After initializing a DEMO account or approving a simulated deposit request:
+After initializing a DEMO or REAL-mode simulated account, or approving a simulated deposit request:
 
 1. Open `/trade`.
 2. Select an instrument.

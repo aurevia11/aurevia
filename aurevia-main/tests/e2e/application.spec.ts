@@ -3,6 +3,7 @@ import {FundingStatus,FundingType,Prisma,PrismaClient} from '@prisma/client';
 import {PNG} from 'pngjs';
 import {test,expect,loginAs,logout,waitForStartup,expectNoHorizontalOverflow} from './fixtures';
 import {db} from '../../lib/db';
+import {balance as ledgerBalance} from '../../lib/ledger';
 import {settleMaturedSimulatedInvestments} from '../../lib/demo-investment-settlement';
 import {SIMULATED_BTC_ADDRESS_SETTING} from '../../lib/config/simulated-bitcoin-address';
 
@@ -577,7 +578,7 @@ test('registration skips contact verification and platform health remains availa
 	await page.goto('/dashboard');
 	await expect(page.getByRole('heading',{name:'Hello, Edited'})).toBeVisible();
 	await expect(page.locator('.dashboard-real-state')).toBeVisible();
-	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(0);
+	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5000);
 	await selectAccountMode(page,'DEMO');
 	await page.goto('/dashboard');
 	await expect(page.getByRole('heading',{name:'Hello, Edited'})).toBeVisible();
@@ -694,17 +695,17 @@ test('account-mode changes refresh and isolate wallet, trade, history, and suppo
 	await page.unroute('**/api/account/mode');
 	await expect(mode).toHaveValue('REAL');
 	await expect(page.locator('.account-heading .account-kicker')).toContainText('REAL ACCOUNT');
-	await expect(page.locator('.wallet-balance-value')).toHaveText('0.00 USD');
-	const instrumentsResponse=await page.request.get('/api/market');
-	const instruments=await instrumentsResponse.json();
-	const realOrderResponse=await page.request.post('/api/orders',{headers:{'Idempotency-Key':randomUUID()},data:{instrumentId:instruments[0].id,side:'BUY',type:'MARKET',quantity:1,expectedPrice:Number(instruments[0].price),observedAt:instruments[0].lastUpdatedAt||instruments[0].updatedAt}});
-	expect(realOrderResponse.status()).toBe(400);
-	expect((await realOrderResponse.json()).error).toContain('INSUFFICIENT_SIMULATED_BALANCE');
+	await expect(page.locator('.wallet-balance-value')).toHaveText('5,000.00 USD');
 	await page.goto('/wallet/transactions');
 	await expect(page.locator('.account-heading .status-pill')).toContainText('REAL ACCOUNT');
 	await expect(page.getByText('No transactions yet')).toBeVisible();
 	await selectAccountMode(page,'DEMO');
 	await expect(page.locator('.account-heading .status-pill')).toContainText('DEMO ACCOUNT');
+	await page.goto('/dashboard');
+	await expect(page.getByRole('heading',{name:'Simulated crypto trading'})).toBeVisible();
+	await expect(page.locator('.dashboard-crypto-trade')).toContainText('DEMO · SIMULATED');
+	await selectAccountMode(page,'REAL');
+	await expect(page.locator('.dashboard-crypto-trade')).toContainText('REAL · SIMULATED');
 	await page.goto('/trade');
 	await selectAccountMode(page,'REAL');
 	await expect(page.getByText(/REAL account balance and trades are simulated ledger activity/)).toBeVisible();
@@ -729,7 +730,7 @@ test('REAL-interface simulated deposits and withdrawals require admin review and
 	expect((await page.request.get('/api/admin/providers/status')).status()).toBe(403);
 	expect((await page.request.post('/api/webhooks/broker/unconfigured',{data:{eventId:'synthetic-test-event'}})).status()).toBe(503);
 	await selectAccountMode(page,'REAL');
-	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(0);
+	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5000);
 	const previousGbpRate=await db.exchangeRate.findUnique({where:{baseCurrency_quoteCurrency:{baseCurrency:'USD',quoteCurrency:'GBP'}}});
 	try{
 		await db.exchangeRate.upsert({
@@ -742,7 +743,7 @@ test('REAL-interface simulated deposits and withdrawals require admin review and
 		expect(configuredRate).toMatchObject({rate:'0.8',source:'E2E configured rate',status:'CURRENT'});
 		await page.goto('/wallet');
 		await expect(page.getByText('Exchange rate: 1 USD = 0.8 GBP')).toBeVisible();
-		await expect(page.getByText(/Approximate display: £0\.00/)).toBeVisible();
+		await expect(page.getByText(/Approximate display: £4,000\.00/)).toBeVisible();
 	}finally{
 		await page.request.patch('/api/currency-preference',{data:{currency:'USD'}});
 		if(previousGbpRate)await db.exchangeRate.update({where:{baseCurrency_quoteCurrency:{baseCurrency:'USD',quoteCurrency:'GBP'}},data:{rate:previousGbpRate.rate,source:previousGbpRate.source,observedAt:previousGbpRate.observedAt}});
@@ -785,7 +786,7 @@ test('REAL-interface simulated deposits and withdrawals require admin review and
 		expect(fundingHistory.find((row:{id:string})=>row.id===fixture('REAL_WITHDRAWAL_ID'))).toMatchObject({status:'COMPLETED',accountMode:'REAL',settledAt:expect.any(String)});
 	}finally{await adminContext.close();}
 
-	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(175);
+	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5175);
 	const withdrawal=await page.request.post('/api/wallet',{headers:{'Idempotency-Key':randomUUID()},data:{type:'WITHDRAWAL',amount:10,currency:'USD'}});
 	expect(withdrawal.status()).toBe(201);
 	expect((await withdrawal.json()).method).toBe('Internal simulated withdrawal');
@@ -798,7 +799,7 @@ test('REAL-interface simulated deposits and withdrawals require admin review and
 		expect(approval.status()).toBe(200);
 		expect((await page.request.get('/api/wallet').then(response=>response.json())).transactions.find((item:{id:string})=>item.id===submitted.id)).toMatchObject({status:'COMPLETED',settlementReference:`SIMULATED-WITHDRAWAL:${submitted.id}`});
 	}finally{await withdrawalAdminContext.close();}
-	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(165);
+	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5165);
 	await selectAccountMode(page,'DEMO');
 	await expect.poll(async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5000);
 });
@@ -907,7 +908,7 @@ test('DEMO trading supports cash-backed buy and owned-unit sell execution',async
 test('dashboard quick trade buys and sells crypto against the DEMO ledger',async({page})=>{
 	await loginAs(page,fixture('USER_EMAIL'),fixture('USER_PASSWORD'));
 	await page.goto('/dashboard');
-	await expect(page.getByRole('heading',{name:'Practice crypto'})).toBeVisible();
+	await expect(page.getByRole('heading',{name:'Simulated crypto trading'})).toBeVisible();
 	const wallet=async()=>Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
 	const startingBalance=await wallet();
 	const markets=await page.request.get('/api/market').then(response=>response.json());
@@ -1005,7 +1006,7 @@ test('simulated BTC conversion is ledger-backed, idempotent, and isolated from R
 		}
 	}
 	await selectAccountMode(page,'REAL');
-	expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(0);
+	expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(5000);
 	await selectAccountMode(page,'DEMO');
 	expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBe(Number(afterSale.balance));
 	const notifications=await page.request.get('/api/notifications?limit=100').then(response=>response.json());
@@ -1150,6 +1151,14 @@ test('simulated investment lifecycle and trading work in both account modes',asy
 		const realPortfolio=await page.request.get('/api/portfolio').then(response=>response.json());
 		expect(realPortfolio.positions).toHaveLength(1);
 		expect(realPortfolio.marketDataMode).toBe('SIMULATED');
+		const realBalanceAfterBuy=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
+		const realSaleQuote=(await page.request.get('/api/market').then(response=>response.json())).find((item:{id:string})=>item.id===tradeableInstrument.id);
+		expect(realSaleQuote).toBeTruthy();
+		const realSale=await page.request.post('/api/orders',{headers:{'Idempotency-Key':randomUUID()},data:{instrumentId:tradeableInstrument.id,side:'SELL',type:'MARKET',quantity:1,expectedPrice:Number(realSaleQuote.price),observedAt:realSaleQuote.lastUpdatedAt||realSaleQuote.updatedAt}});
+		expect(realSale.status()).toBe(201);
+		expect((await realSale.json()).status).toBe('FILLED');
+		expect(Number((await page.request.get('/api/wallet').then(response=>response.json())).balance)).toBeGreaterThan(realBalanceAfterBuy);
+		expect(await page.request.get('/api/positions').then(response=>response.json())).toHaveLength(0);
 		const finalRealBalance=Number((await page.request.get('/api/wallet').then(response=>response.json())).balance);
 
 		await selectAccountMode(page,'DEMO');
@@ -1355,9 +1364,11 @@ test('admin ledger adjustments update isolated DEMO and REAL accounts with audit
 	await loginAs(page,fixture('ADMIN_EMAIL'),fixture('ADMIN_PASSWORD'));
 	const unverifiedCustomer=await db.user.findUniqueOrThrow({where:{email:fixture('USER_EMAIL')},select:{id:true,kycStatus:true}});
 	expect(unverifiedCustomer.kycStatus).toBe('PENDING');
+	const unverifiedRealAccount=await db.ledgerAccount.findUnique({where:{code:`USER:${unverifiedCustomer.id}:REAL:USD`},select:{id:true}});
+	const unverifiedRealBalance=unverifiedRealAccount?await ledgerBalance(db,unverifiedRealAccount.id):new Prisma.Decimal(0);
 	const unverifiedCredit=await page.request.post('/api/admin/balances',{data:{userId:unverifiedCustomer.id,accountMode:'REAL',currency:'USD',amount:'10.00',direction:'CREDIT',category:'PROMOTIONAL',reason:'Free simulated account allocation',idempotencyKey:randomUUID()}});
 	expect(unverifiedCredit.status()).toBe(201);
-	expect((await unverifiedCredit.json()).newBalance).toBe('10');
+	expect(Number((await unverifiedCredit.json()).newBalance)).toBeCloseTo(Number(unverifiedRealBalance)+10,2);
 	expect(await db.auditLog.count({where:{action:'ADMIN_ACCOUNT_CREDIT',entity:'LEDGER_TRANSACTION',metadata:{path:['administrativeRealAllocation'],equals:true}}})).toBeGreaterThan(0);
 	const creditKey=randomUUID();
 	const demoCredit=await page.request.post('/api/admin/balances',{data:{userId,accountMode:'DEMO',currency:'USD',amount:'25.50',direction:'CREDIT',category:'ADMIN_ALLOCATION',reason:'Approved simulated training allocation',idempotencyKey:creditKey}});
@@ -1369,7 +1380,7 @@ test('admin ledger adjustments update isolated DEMO and REAL accounts with audit
 	const realCredit=await page.request.post('/api/admin/balances',{data:{userId,accountMode:'REAL',currency:'USD',amount:'25.50',direction:'CREDIT',category:'ADMIN_ALLOCATION',reason:'Administrator-recorded allocation pending external settlement',idempotencyKey:realKey}});
 	expect(realCredit.status()).toBe(201);
 	await page.goto('/admin/users');
-	await page.locator('main').getByPlaceholder('Search accounts').fill(fixture('INVESTOR_EMAIL'));
+	await page.getByRole('textbox',{name:'Search users by name, email, or account ID'}).fill(fixture('INVESTOR_EMAIL'));
 	const investorAccount=page.locator('article').filter({hasText:fixture('INVESTOR_EMAIL')}).first();
 	await expect(investorAccount).toBeVisible();
 	await investorAccount.getByText('Account controls, verification, and ledger').click();

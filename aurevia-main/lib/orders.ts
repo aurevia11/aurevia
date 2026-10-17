@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {db} from './db';
-import {balance,ensureSystemAccount,ensureUserLedger,postDoubleEntry} from './ledger';
+import {balance,ensureSystemAccount,ensureUserLedger,initializeRealSimulatedAccount,postDoubleEntry} from './ledger';
 import {AccountMode,NotificationType,OrderSide,OrderStatus,OrderType,Prisma} from '@prisma/client';
 import {createNotification} from '@/lib/notifications';
 import {assertFreshQuote,assertSellableQuantity,averageEntryPrice,realizedSpotPnl} from '@/lib/trading-policy';
@@ -25,6 +25,7 @@ export async function executeOrderTx(tx:Prisma.TransactionClient,orderId:string,
  if(fillPrice.lte(0))throw new Error('INVALID_PRICE');
  const notional=fillPrice.mul(quantity);
  const fee=notional.mul(order.instrument.takerFee);
+ if(order.accountMode===AccountMode.REAL)await initializeRealSimulatedAccount(tx,order.userId);
  const userAcct=await ensureUserLedger(tx,order.userId,order.accountMode);
  const fees=await ensureSystemAccount(tx,`SYSTEM:${order.accountMode}:FEES`,'Simulated trading fees','USD',order.accountMode);
  const clearing=await ensureSystemAccount(tx,`SYSTEM:${order.accountMode}:CLEARING`,'Simulated spot clearing','USD',order.accountMode);

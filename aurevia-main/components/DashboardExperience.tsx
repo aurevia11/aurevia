@@ -2,6 +2,7 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
+import {useSession} from 'next-auth/react';
 import {useCallback,useEffect,useState,type ReactNode} from 'react';
 import {Activity,ArrowRight,ArrowUpRight,BadgeCheck,Bell,Building2,CircleDollarSign,Clock3,Eye,Landmark,LineChart,LoaderCircle,ShieldCheck,Sparkles,TrendingUp,UserRound,WalletCards,X} from 'lucide-react';
 import Nav from '@/components/Nav';
@@ -18,10 +19,11 @@ const money=(locale:string,value:string|null)=>value===null?'—':new Intl.Numbe
 const signed=(locale:string,value:string)=>{const n=Number(value);return `${n>=0?'+':''}${money(locale,value)}`};
 
 export default function DashboardExperience(){
+  const {data:session}=useSession();
   const {locale,translate}=useLocale();
   const [data,setData]=useState<DashboardData|null>(null);const [loading,setLoading]=useState(true);const [error,setError]=useState('');const [avatarUrl,setAvatarUrl]=useState('');
   const load=useCallback(async()=>{try{const response=await fetch('/api/dashboard',{cache:'no-store'});const result=await response.json();if(!response.ok)throw new Error(result.error||translate('dashboardError'));setData(result);setError('');setAvatarUrl('');if(result.profile.hasAvatar){try{const avatar=await fetch('/api/profile/avatar',{cache:'no-store'});if(avatar.ok){const signed=await avatar.json();setAvatarUrl(signed.url)}}catch{}}}catch(exception){setError(exception instanceof Error?exception.message:translate('dashboardError'));}finally{setLoading(false)}},[translate]);
-  useEffect(()=>{void load()},[load]);
+  useEffect(()=>{void load()},[load,session?.user?.accountMode]);
   const marketQuery=useQuery({queryKey:['dashboard-market',data?.marketInstruments.map(i=>i.symbol).join(',')],queryFn:async()=>{const symbols=data?.marketInstruments.map(i=>i.symbol)||[];if(!symbols.length)return {quotes:[]};const response=await fetch(`/api/live-markets?symbols=${encodeURIComponent(symbols.join(','))}`,{cache:'no-store'});const body=await response.json();if(!response.ok)throw new Error(body.error||'Market feed unavailable.');return body as {quotes:Array<MarketQuote|{asset:{id:string};error:string}>}},enabled:!!data&&data.marketInstruments.length>0,refetchInterval:30_000});
   if(loading&&!data)return <><Nav/><main className="account-page dashboard-loading"><LoaderCircle size={24} className="gold animate-spin"/><p>{translate('loadingWorkspace')}</p></main></>;
   if(error&&!data)return <><Nav/><main className="account-page"><div className="account-callout" role="alert"><span>{error}</span><button type="button" className="text-link" onClick={()=>void load()}>{translate('retry')}</button></div></main></>;
@@ -40,7 +42,7 @@ export default function DashboardExperience(){
       <Metric icon={Sparkles} label={translate('totalPL')} value={signed(locale,String(totalPnl))} detail={translate('recordedSimulated')} tone={totalPnl>=0?'green':'red'}/>
       <Metric icon={Landmark} label={translate('openPositions')} value={String(data.activePositions)} detail={translate('simulatedPositions')} tone="gold"/>
     </section>
-    {isDemo&&<DashboardCryptoTrade cash={data.cash} onTradeComplete={load}/>}
+    <DashboardCryptoTrade accountMode={mode} cash={data.cash} onTradeComplete={load}/>
     <div className="dashboard-grid">
       <section className="dashboard-panel card"><Header icon={LineChart} title={translate('marketOverview')} subtitle={isDemo?translate('simulatedInternal'):translate('externalMarket')} link="/markets" action={<StatusDot stale={false}/>} openLabel={translate('open')}/><div className="market-overview-list">{data.marketInstruments.slice(0,6).map(item=>{const quote=marketQuery.data?.quotes.find(q=>!('error' in q)&&q.asset.id===item.symbol);const liveQuote=quote&&!('error' in quote)?quote:undefined;return <Link href={`/markets?symbol=${item.symbol}`} className="market-row" key={item.symbol}><span><b>{item.symbol}</b><small>{item.name}</small></span>{liveQuote&&Number.isFinite(liveQuote.price)?<><strong>{formatPrice(locale,liveQuote.price)}</strong><em className={liveQuote.changePercent>=0?'text-profit':'text-loss'}>{formatPercent(locale,liveQuote.changePercent)}</em></>:<span className="market-unavailable">—</span>}</Link>})}</div></section>
       <section className="dashboard-panel card"><Header icon={Activity} title={translate('recentActivity')} subtitle={translate('persistedEvents')} link="/activity" openLabel={translate('open')}/><div className="recent-activity-list">{data.activity.length ? data.activity.slice(0,5).map(item=><Link href={item.link} className="recent-activity-row" key={item.id}><span className={`activity-dot activity-${item.category}`}/><span><b>{item.action}</b><small>{item.asset} · {item.source}</small></span><span><em>{item.status}</em><strong className={item.pnl&&Number(item.pnl)<0?'text-loss':item.pnl?'text-profit':''}>{item.pnl===null?'':`${Number(item.pnl)>=0?'+':'−'}${money(locale,item.pnl)}`}</strong></span></Link>) : <Empty icon={Activity} title={translate('noActivity')} text={translate('activityDescription')}/>}</div></section>
